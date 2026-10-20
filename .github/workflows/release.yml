@@ -11,6 +11,10 @@ on:
 # WYRE-AI/reusable-workflows so every *-mcp repo stays in lockstep instead
 # of drifting per-repo. PR-time lint/test gating is test.yml's concern; this
 # workflow only runs the release path.
+# No default token scopes; the release job grants exactly what the reusable
+# pipeline needs below.
+permissions: {}
+
 jobs:
   release:
     permissions:

@@ -15,8 +15,11 @@ services:
       - AUTH_MODE=gateway
       - CONDUIT_S2S_SECRET=${CONDUIT_S2S_SECRET:?set CONDUIT_S2S_SECRET}
       - LOG_LEVEL=${LOG_LEVEL:-info}
+      # The four create tools stay hidden unless this is exactly "true".
+      - MARKETSHARP_ENABLE_WRITES=${MARKETSHARP_ENABLE_WRITES:-false}
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      # Only the HTTP transport serves /health; under stdio there is nothing to probe.
+      test: ["CMD-SHELL", "[ \"$${MCP_TRANSPORT:-http}\" != \"http\" ] || wget --no-verbose --tries=1 --spider \"http://localhost:$${MCP_HTTP_PORT:-8080}/health\" || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

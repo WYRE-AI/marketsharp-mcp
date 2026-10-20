@@ -6,6 +6,11 @@ const creds = { companyId: '123', apiKey: 'k', apiSecret: 's', employeeId: '9' }
 const WRITES_ON = { MARKETSHARP_ENABLE_WRITES: 'true' } as NodeJS.ProcessEnv;
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
 
+const FULL_INQUIRY = {
+  id: 'i1', contactId: 'c1', notes: 'gate code 12', addressLineOne: '1 Main St', addressLineTwo: '',
+  city: 'Holland', state: 'MI', zip: '49423', latitude: 42.78, longitude: -86.1,
+};
+
 const fetchMock = vi.fn();
 beforeEach(() => {
   clearTokenCache();
@@ -181,7 +186,7 @@ describe('write tools are create-only', () => {
     fetchMock.mockImplementation(async (url: string) => {
       if (String(url).endsWith('/token')) return json({ access_token: 'tk' });
       if (String(url).includes('/inquiries/i1')) {
-        return json({ meta: {}, response: { id: 'i1', contactId: 'c1', notes: 'gate code 12', addressLineOne: '1 Main St', city: 'Holland', state: 'MI', zip: '49423' } });
+        return json({ meta: {}, response: [{ ...FULL_INQUIRY }] });
       }
       return json({ id: 'new' });
     });
@@ -189,12 +194,50 @@ describe('write tools are create-only', () => {
       inquiryId: 'i1', appointmentDateTime: '2026-10-22T10:00:00', salespersonId: '44', appointmentId: 'should-not-pass',
     });
     expect(result.isError, result.content[0].text).toBeFalsy();
-    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual(['GET /companies/123/inquiries/i1', 'POST /companies/123/appointments']);
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      'GET /companies/123/inquiries/i1?isAppointmentRequired=false',
+      'POST /companies/123/appointments',
+    ]);
     expect(calls[1].body).not.toHaveProperty('appointmentId');
     expect(calls[1].body).toMatchObject({
       contactId: 'c1', inquiryId: 'i1', appointmentDateTime: '2026-10-22T10:00:00', salespersonOneId: '44', appointmentSetById: '9',
       inquiryNotes: 'gate code 12', inquiryAddressLineOne: '1 Main St', inquiryCity: 'Holland', inquiryState: 'MI', inquiryZip: '49423',
+      inquiryAddressLineTwo: '', inquiryAddressLatitude: '42.78', inquiryAddressLongitude: '-86.1',
     });
+  });
+
+  const inquiryWith = (inquiry: Record<string, unknown>) =>
+    fetchMock.mockImplementation(async (url: string) => {
+      if (String(url).endsWith('/token')) return json({ access_token: 'tk' });
+      if (String(url).includes('/inquiries/')) return json({ meta: {}, response: [inquiry] });
+      return json({ id: 'new' });
+    });
+
+  it.each(['notes', 'addressLineOne', 'addressLineTwo', 'city', 'state', 'zip', 'latitude', 'longitude'])(
+    'appointment: refuses to book when the inquiry response omits %s',
+    async (field) => {
+      const partial: Record<string, unknown> = { ...FULL_INQUIRY };
+      delete partial[field];
+      inquiryWith(partial);
+      const { calls, result } = await call('marketsharp_appointments_create', { inquiryId: 'i1', appointmentDateTime: 'x', salespersonId: '1' });
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain(field);
+      expect(calls.map((c) => c.method)).toEqual(['GET']);
+    },
+  );
+
+  it('appointment: an explicit null inquiry field is sent as an empty string', async () => {
+    inquiryWith({ ...FULL_INQUIRY, addressLineTwo: null, latitude: null, longitude: null });
+    const { calls, result } = await call('marketsharp_appointments_create', { inquiryId: 'i1', appointmentDateTime: 'x', salespersonId: '1' });
+    expect(result.isError, result.content[0].text).toBeFalsy();
+    expect(calls[1].body).toMatchObject({ inquiryAddressLineTwo: '', inquiryAddressLatitude: '', inquiryAddressLongitude: '' });
+  });
+
+  it('appointment: refuses when MarketSharp returns a different inquiry', async () => {
+    inquiryWith({ ...FULL_INQUIRY, id: 'other' });
+    const { calls, result } = await call('marketsharp_appointments_create', { inquiryId: 'i1', appointmentDateTime: 'x', salespersonId: '1' });
+    expect(result.isError).toBe(true);
+    expect(calls).toHaveLength(1);
   });
 
   it("appointment: refuses to book when the inquiry can't be read", async () => {

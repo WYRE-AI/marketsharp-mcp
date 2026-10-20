@@ -66,7 +66,7 @@ endpoints are upserts. These tools never send a record id, so they only create:
 | `marketsharp_contact_notes_create` | `POST …/notes/contactNote` | Needs an employee |
 | `marketsharp_inquiry_notes_create` | `POST …/opportunities/notes` | |
 | `marketsharp_activities_create` | `POST …/activities` | MarketSharp automation rules don't run |
-| `marketsharp_appointments_create` | `POST …/appointments` | Reads the inquiry first and sends its address and notes back unchanged, because MarketSharp's save rewrites them |
+| `marketsharp_appointments_create` | `POST …/appointments` | Reads the inquiry first (`isAppointmentRequired=false`, so a lead with no appointment yet is found) and sends its address, coordinates and notes back unchanged, because MarketSharp's save rewrites them. Refuses to book if the inquiry response is missing any of those fields |
 
 There are no delete tools. The REST API has no endpoint to create a contact or an
 inquiry (lead), so this server can't either.
@@ -84,12 +84,16 @@ HTTP (`MCP_TRANSPORT=http`, `/mcp` + `/health`) refuses to start without a real
 `CONDUIT_S2S_SECRET` and requires a valid `X-Gateway-S2S` header on every `/mcp`
 request. With `AUTH_MODE=gateway` (the image default) credentials come only from
 the `x-marketsharp-*` headers; env credentials are never used as a fallback.
-See `.env.example`.
+See `.env.example`. The create tools stay off unless `MARKETSHARP_ENABLE_WRITES=true`;
+`docker-compose.yml` passes it through and defaults it to `false`. The image's
+health check probes `/health` only when `MCP_TRANSPORT=http`.
 
 ## Limits and unknowns
 
-- MarketSharp doesn't publish rate limits. The server retries 429/503 with
-  `Retry-After` or exponential backoff (3 tries).
+- MarketSharp doesn't publish rate limits. The server retries 429 with
+  `Retry-After` or exponential backoff (3 tries). A 503 is retried only for
+  reads: the create tools return it instead of retrying, since the record may
+  already have been saved and retrying could create a duplicate.
 - The `/token` 200 response shape isn't documented. The server accepts
   `access_token` or `token`, top level or inside `response`, or a bare JWT
   body (plain or JSON-quoted).

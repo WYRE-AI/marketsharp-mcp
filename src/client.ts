@@ -245,7 +245,8 @@ export function renderBody(text: string): string {
 
 /**
  * Call MarketSharp with a cached bearer token. A 401 triggers exactly one
- * token refresh and retry; 429/503 back off (Retry-After honored). Redirects
+ * token refresh and retry; 429 (any method) and 503 (GET only) back off
+ * (Retry-After honored). Redirects
  * are refused so the bearer token never leaves restapi.marketsharpm.com.
  */
 export async function marketsharpRequest(creds: MarketSharpCredentials | null, req: MarketSharpRequest): Promise<string> {
@@ -276,7 +277,11 @@ export async function marketsharpRequest(creds: MarketSharpCredentials | null, r
       await getToken(creds, true);
       continue;
     }
-    if ((res.status === 429 || res.status === 503) && attempt < MAX_RETRIES) {
+    // 429 means MarketSharp rejected the request, so any method may retry.
+    // A 503 can come from a proxy after the backend already saved a POST, and
+    // the POST upserts here create new records, so only GETs retry on 503.
+    const retryable = res.status === 429 || (res.status === 503 && req.method === 'GET');
+    if (retryable && attempt < MAX_RETRIES) {
       await res.body?.cancel().catch(() => undefined);
       const wait = parseRetryAfter(res.headers.get('retry-after')) ?? 1000 * 2 ** attempt;
       await sleep(Math.min(wait, MAX_BACKOFF_MS));

@@ -72,6 +72,38 @@ describe('client', () => {
     },
   );
 
+  describe('503 retries', () => {
+    const okThen = (first: Response) => {
+      fetchMock.mockReset();
+      let n = 0;
+      fetchMock.mockImplementation(async (url: string) => {
+        if (String(url).endsWith('/token')) return json({ access_token: 'tk' });
+        n += 1;
+        return n === 1 ? first : json({ id: 'ok' });
+      });
+      return () => fetchMock.mock.calls.filter(([u]) => !String(u).endsWith('/token')).length;
+    };
+    const busy = (status: number) => new Response('busy', { status, headers: { 'Retry-After': '0' } });
+
+    it('does not retry a POST after a 503, so a write is never sent twice', async () => {
+      const vendorCalls = okThen(busy(503));
+      await expect(marketsharpRequest(creds, { method: 'POST', path: '/companies/123/contactNotes', body: { note: 'n' } })).rejects.toThrow('HTTP 503');
+      expect(vendorCalls()).toBe(1);
+    });
+
+    it('still retries a GET after a 503', async () => {
+      const vendorCalls = okThen(busy(503));
+      expect(await marketsharpRequest(creds, { method: 'GET', path: '/companies/123' })).toContain('ok');
+      expect(vendorCalls()).toBe(2);
+    });
+
+    it('still retries a POST after a 429, which MarketSharp rejected outright', async () => {
+      const vendorCalls = okThen(busy(429));
+      expect(await marketsharpRequest(creds, { method: 'POST', path: '/companies/123/contactNotes', body: { note: 'n' } })).toContain('ok');
+      expect(vendorCalls()).toBe(2);
+    });
+  });
+
   it('caches tokens per credential set and shares one in-flight mint', async () => {
     fetchMock.mockImplementation(async () => json({ access_token: 'shared', expires_in: 3600 }));
     const [a, b] = await Promise.all([getToken(creds), getToken(creds)]);

@@ -65,6 +65,9 @@ const pagingProps = {
 const DEFAULT_ROWS = 100;
 
 /** Unwrap MarketSharp's {meta, response} envelope and a single-element array. */
+/** Inquiry fields the appointment save rewrites (InquiryResourceModel names). */
+const PRESERVED_INQUIRY_FIELDS = ['notes', 'addressLineOne', 'addressLineTwo', 'city', 'state', 'zip', 'latitude', 'longitude'] as const;
+
 function unwrapRecord(text: string): Record<string, unknown> | undefined {
   try {
     let body = JSON.parse(text) as unknown;
@@ -580,12 +583,21 @@ export const TOOLS: ToolDef[] = [
       const inquiryText = await marketsharpRequest(c, {
         method: 'GET',
         path: `${company(c)}/inquiries/${encodeSegment(inquiryId, 'inquiryId')}`,
+        // The 2.0 GET defaults isAppointmentRequired=true, which hides an
+        // inquiry that has no active appointment yet: the usual booking case.
+        query: { isAppointmentRequired: false },
       });
       const inq = unwrapRecord(inquiryText);
       const contactId = inq && typeof inq.contactId === 'string' ? inq.contactId : undefined;
-      if (!inq || !contactId) {
+      // InquiryResourceModel marks none of these required. An absent field
+      // would go out as '' and blank the inquiry, so refuse unless every
+      // copied field is present (an explicit null stays an empty string).
+      const missing = inq ? PRESERVED_INQUIRY_FIELDS.filter((k) => !(k in inq)) : [];
+      const wrongRecord = inq && inq.id != null && String(inq.id) !== inquiryId;
+      if (!inq || !contactId || missing.length > 0 || wrongRecord) {
         throw new MarketSharpApiError(
-          "Couldn't read that inquiry's contact and address, so no appointment was booked (booking without them would blank the inquiry's address)."
+          "Couldn't read that inquiry's contact and address, so no appointment was booked (booking without them would blank the inquiry's address)." +
+            (missing.length > 0 ? ` MarketSharp didn't return: ${missing.join(', ')}.` : '')
         );
       }
       const str = (k: string) => (typeof inq[k] === 'string' ? (inq[k] as string) : inq[k] == null ? '' : String(inq[k]));
