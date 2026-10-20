@@ -29,7 +29,7 @@ const NOTE_TYPES = [
   'Activity', 'AdditionalContact', 'Appointment', 'ContactNote', 'Finance', 'Inquiry', 'Job',
   'JobProduct', 'JobProductDetail', 'Production', 'Proposal', 'ServiceOrder', 'Testimonial', 'WorkOrder',
 ] as const;
-const EMPLOYEE_NOTE = ' MarketSharp needs an employee on the connection (Employee ID) for this call and applies that employee\'s permissions.';
+const EMPLOYEE_NOTE = " Needs an Employee ID on the connection, and runs with that employee's MarketSharp permissions.";
 
 const company = (c: MarketSharpCredentials) => `/companies/${encodeSegment(c.companyId, 'Company ID')}`;
 
@@ -83,7 +83,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'marketsharp_companies_list',
     tier: 'read',
-    description: 'List the MarketSharp companies this API key can reach, with their IDs.',
+    description: 'List the MarketSharp companies this API key can access, with their IDs.',
     inputSchema: { type: 'object', properties: {} },
     build: () => ({ method: 'GET', path: '/companies' }),
   },
@@ -167,7 +167,7 @@ export const TOOLS: ToolDef[] = [
     name: 'marketsharp_inquiries_get',
     tier: 'read',
     description:
-      'Get one inquiry (lead / opportunity) by ID: date, status, lead sources, product interests, address and notes.',
+      'Get one inquiry (lead) by ID: date, status, lead sources, product interests, address and notes.',
     inputSchema: { type: 'object', properties: { inquiryId: s('MarketSharp inquiry ID.') }, required: ['inquiryId'] },
     build: (a, c) => ({ method: 'GET', path: `${company(c)}/inquiries/${encodeSegment(reqString(a, 'inquiryId'), 'inquiryId')}` }),
   },
@@ -335,7 +335,7 @@ export const TOOLS: ToolDef[] = [
     name: 'marketsharp_opportunities_list',
     tier: 'read',
     description:
-      'List jobs and leads changed since a date, with job numbers, sale and contract dates, contract totals, contract status and balance due.',
+      'List opportunities (jobs and leads) changed since a date, with job numbers, sale and contract dates, contract totals, contract status and balance due.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -557,7 +557,7 @@ export const TOOLS: ToolDef[] = [
     name: 'marketsharp_appointments_create',
     tier: 'write',
     description:
-      "Book a new appointment on an existing inquiry (lead). The inquiry's address and notes are kept as they are. It never edits or results an existing appointment.",
+      "Book a new appointment on an existing inquiry (lead). The inquiry's address and notes are kept as they are. It doesn't change an existing appointment or record its result.",
     inputSchema: {
       type: 'object',
       properties: {

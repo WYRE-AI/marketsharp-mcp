@@ -64,6 +64,18 @@ describe('tool surface', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('flags the tools that need an Employee ID (inquiry notes do not, per the spec)', () => {
+    const note = " Needs an Employee ID on the connection, and runs with that employee's MarketSharp permissions.";
+    const needs = TOOLS.filter((t) => t.description.endsWith(note)).map((t) => t.name).sort();
+    expect(needs).toEqual([
+      'marketsharp_contact_notes_create',
+      'marketsharp_contacts_search',
+      'marketsharp_inquiries_search',
+      'marketsharp_jobs_search',
+      'marketsharp_notes_list',
+    ]);
+  });
+
   it('rejects unknown tools', async () => {
     const { result } = await call('marketsharp_contacts_delete');
     expect(result.isError).toBe(true);
