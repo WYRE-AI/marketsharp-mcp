@@ -73,6 +73,8 @@ inquiry (lead), so this server can't either.
 
 ## Running
 
+Requires Node.js 22 or later.
+
 ```bash
 npm ci && npm run build
 MARKETSHARP_COMPANY_ID=… MARKETSHARP_API_KEY=… MARKETSHARP_API_SECRET=… node dist/index.js   # stdio
@@ -89,7 +91,8 @@ See `.env.example`.
 - MarketSharp doesn't publish rate limits. The server retries 429/503 with
   `Retry-After` or exponential backoff (3 tries).
 - The `/token` 200 response shape isn't documented. The server accepts
-  `access_token` or `token`, top level or inside `response`.
+  `access_token` or `token`, top level or inside `response`, or a bare JWT
+  body (plain or JSON-quoted).
 - Responses are capped at 200,000 characters; narrow with filters or paging.
 - Not covered: calendar, texting, email, PaySimple, QuickBooks, CompanyCam,
   automation rules, analytics, estimates (v1 only), and all admin/config writes.
@@ -103,7 +106,9 @@ npm run lint    # tsc --noEmit
 
 Releases are cut by semantic-release on `main` through
 `WYRE-AI/reusable-workflows` (`mcp-server-release.yml`), publishing
-`ghcr.io/wyre-ai/marketsharp-mcp`.
+`ghcr.io/wyre-ai/marketsharp-mcp`. Release notes are published on the
+GitHub Release for each version; like the rest of the fleet, `main` is
+branch-protected, so the release job doesn't commit `CHANGELOG.md` back.
 
 ## License
 

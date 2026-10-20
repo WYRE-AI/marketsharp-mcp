@@ -150,18 +150,28 @@ async function mintToken(c: MarketSharpCredentials): Promise<string> {
   }
   let token: unknown;
   let expiresIn: unknown;
+  const JWT_SHAPE = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/;
+  let parsed: unknown;
+  let isJson = true;
   try {
-    const body = JSON.parse(text) as Record<string, unknown>;
+    parsed = JSON.parse(text);
+  } catch {
+    isJson = false;
+  }
+  if (isJson && typeof parsed === 'string') {
+    // A JSON-encoded string body ("eyJ..."): the string itself is the token.
+    if (JWT_SHAPE.test(parsed.trim())) token = parsed.trim();
+  } else if (isJson && parsed && typeof parsed === 'object') {
+    const body = parsed as Record<string, unknown>;
     // The 200 schema is undocumented: accept the OAuth shape, a bare `token`,
     // or either nested under MarketSharp's `response` envelope.
     const inner = (body.response && typeof body.response === 'object' ? body.response : {}) as Record<string, unknown>;
     token = body.access_token ?? body.token ?? inner.access_token ?? inner.token;
     expiresIn = body.expires_in ?? inner.expires_in;
-  } catch {
-    // A bare JWT string body.
-    if (/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/.test(text.trim().replace(/^"|"$/g, ''))) {
-      token = text.trim().replace(/^"|"$/g, '');
-    }
+  } else if (!isJson) {
+    // A bare (unquoted) JWT body.
+    const bare = text.trim();
+    if (JWT_SHAPE.test(bare)) token = bare;
   }
   if (typeof token !== 'string' || token.length === 0) {
     throw new MarketSharpApiError("MarketSharp's sign-in response didn't include an access token.", res.status);

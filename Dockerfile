@@ -1,5 +1,5 @@
 # Multi-stage build for efficient container size
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 
 ARG VERSION="unknown"
 ARG COMMIT_SHA="unknown"
@@ -14,7 +14,7 @@ COPY . .
 RUN npm run build
 RUN npm prune --omit=dev
 
-FROM node:20-alpine AS production
+FROM node:22-alpine AS production
 
 RUN apk -U upgrade --no-cache
 

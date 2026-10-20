@@ -10,7 +10,7 @@
 
 import { createHmac } from 'node:crypto';
 import { request as httpRequest, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
+import { connect as netConnect, type AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as client from '../client.js';
 import { startHttpServer } from '../http.js';
@@ -106,6 +106,18 @@ function sendHttp(options: {
     req.on('error', reject);
     if (options.body !== undefined) req.write(options.body);
     req.end();
+  });
+}
+
+/** Raw HTTP/1.1 over a socket, so the test controls the Host header byte-for-byte. */
+function sendRaw(port: number, head: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const socket = netConnect(port, '127.0.0.1', () => socket.write(head));
+    const chunks: Buffer[] = [];
+    socket.setTimeout(5000, () => socket.destroy(new Error('raw request timeout')));
+    socket.on('data', (c: Buffer) => chunks.push(c));
+    socket.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    socket.on('error', reject);
   });
 }
 
@@ -463,6 +475,29 @@ describe('HTTP /mcp authentication', () => {
     expect(response.body).not.toContain('env-secret');
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it.each(['bad host[', 'exa mple.com:99999', '%%%'])(
+    'routes by path and does not crash when the Host header is invalid (%s)',
+    async (host) => {
+      const server = await listen();
+      const health = await sendRaw(
+        server.port,
+        `GET /health HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`,
+      );
+      expect(health).toMatch(/^HTTP\/1\.1 200 /);
+      expect(health).toContain('"status":"ok"');
+      const unauth = await sendRaw(
+        server.port,
+        `POST /mcp HTTP/1.1\r\nHost: ${host}\r\nContent-Type: application/json\r\n` +
+          `Content-Length: ${Buffer.byteLength(groupsCall)}\r\nConnection: close\r\n\r\n${groupsCall}`,
+      );
+      expect(unauth).toMatch(/^HTTP\/1\.1 401 /);
+      // The server is still up after the bad Host.
+      const again = await sendHttp({ port: server.port, method: 'GET', path: '/health' });
+      expect(again.status).toBe(200);
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe('HTTP /mcp env mode', () => {

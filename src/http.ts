@@ -122,7 +122,16 @@ export async function startHttpServer(): Promise<HttpServer> {
   const isGatewayMode = process.env.AUTH_MODE === 'gateway';
 
   const httpServer = createHttpServer(async (req, res) => {
-    const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+    // Only the path matters for routing. Parse against a fixed base so a
+    // missing or malformed Host header can't throw out of the handler.
+    let url: URL;
+    try {
+      url = new URL(req.url || '/', 'http://localhost');
+    } catch {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Bad request' }));
+      return;
+    }
 
     if (url.pathname === '/health') {
       // /health is container LIVENESS, not credential-readiness. It stays

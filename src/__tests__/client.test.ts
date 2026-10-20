@@ -52,6 +52,26 @@ describe('client', () => {
     expect(await getToken(creds)).toBe('nested');
   });
 
+  it('uses a JSON-encoded string body as the token', async () => {
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.c2ln';
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify(jwt), { status: 200 }));
+    expect(await getToken(creds)).toBe(jwt);
+  });
+
+  it('uses a bare unquoted JWT body as the token', async () => {
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.c2ln';
+    fetchMock.mockResolvedValueOnce(new Response(`${jwt}\n`, { status: 200 }));
+    expect(await getToken(creds)).toBe(jwt);
+  });
+
+  it.each([JSON.stringify('not a jwt'), JSON.stringify(''), 'null', '42', 'not json at all'])(
+    'rejects a sign-in body with no usable token (%s)',
+    async (body) => {
+      fetchMock.mockResolvedValueOnce(new Response(body, { status: 200 }));
+      await expect(getToken(creds)).rejects.toThrow("didn't include an access token");
+    },
+  );
+
   it('caches tokens per credential set and shares one in-flight mint', async () => {
     fetchMock.mockImplementation(async () => json({ access_token: 'shared', expires_in: 3600 }));
     const [a, b] = await Promise.all([getToken(creds), getToken(creds)]);
