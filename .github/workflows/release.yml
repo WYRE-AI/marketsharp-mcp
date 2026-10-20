@@ -1,0 +1,27 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Thin caller for the canonical reusable release pipeline. The build ->
+# semantic-release -> Docker -> MCP Registry -> security chain lives in
+# WYRE-AI/reusable-workflows so every *-mcp repo stays in lockstep instead
+# of drifting per-repo. PR-time lint/test gating is test.yml's concern; this
+# workflow only runs the release path.
+jobs:
+  release:
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      packages: write
+      id-token: write
+      security-events: write
+    uses: WYRE-AI/reusable-workflows/.github/workflows/mcp-server-release.yml@fbc1e9864c3c591f0d76c46b1de750489614fe0b
+    with:
+      server-name: marketsharp-mcp
+      image-name: ghcr.io/wyre-ai/marketsharp-mcp
+    secrets: inherit
