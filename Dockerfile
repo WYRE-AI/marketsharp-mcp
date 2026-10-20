@@ -11,6 +11,19 @@ COPY package*.json ./
 RUN npm ci --ignore-scripts
 
 COPY . .
+
+# Stamp the release VERSION (the reusable release pipeline passes it as a build
+# arg) into package.json before the build, the same way autotask-mcp does.
+# semantic-release doesn't commit its bump back to protected main, so the
+# checked-in package.json stays at 0.0.0. The production stage copies this
+# stamped package.json, and src/version.ts reads it for serverInfo.version.
+# Skipped for local builds (VERSION="unknown") so the checked-in value isn't
+# clobbered with a placeholder.
+RUN if [ "${VERSION}" != "unknown" ] && [ -n "${VERSION}" ]; then \
+      npm pkg set version="${VERSION}" && \
+      echo "Stamped package.json version -> ${VERSION}"; \
+    fi
+
 RUN npm run build
 RUN npm prune --omit=dev
 

@@ -110,7 +110,8 @@ npm run lint    # tsc --noEmit
 
 Releases are cut by semantic-release on `main` through
 `WYRE-AI/reusable-workflows` (`mcp-server-release.yml`), publishing
-`ghcr.io/wyre-ai/marketsharp-mcp`. Release notes are published on the
+`ghcr.io/wyre-ai/marketsharp-mcp`. The image build stamps the release version
+(the `VERSION` build arg) into `package.json`, so the server reports it. Release notes are published on the
 GitHub Release for each version; like the rest of the fleet, `main` is
 branch-protected, so the release job doesn't commit `CHANGELOG.md` back.
 
