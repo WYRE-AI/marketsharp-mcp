@@ -64,10 +64,11 @@ describe('tool surface', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('flags the tools that need an Employee ID (inquiry notes do not, per the spec)', () => {
+  it('flags the tools that need an Employee ID (activities do, inquiry notes do not, per the spec)', () => {
     const note = " Needs an Employee ID on the connection, and runs with that employee's MarketSharp permissions.";
     const needs = TOOLS.filter((t) => t.description.endsWith(note)).map((t) => t.name).sort();
     expect(needs).toEqual([
+      'marketsharp_activities_create',
       'marketsharp_contact_notes_create',
       'marketsharp_contacts_search',
       'marketsharp_inquiries_search',

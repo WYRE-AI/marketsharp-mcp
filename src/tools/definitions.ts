@@ -513,7 +513,7 @@ export const TOOLS: ToolDef[] = [
     name: 'marketsharp_activities_create',
     tier: 'write',
     description:
-      'Create a new activity (to-do, call or follow-up) on a contact, optionally tied to an inquiry, appointment or job. MarketSharp automation rules do not run for activities created this way. It never edits an existing activity.',
+      'Create a new activity (to-do, call or follow-up) on a contact, optionally tied to an inquiry, appointment or job. MarketSharp automation rules do not run for activities created this way. It never edits an existing activity.' + EMPLOYEE_NOTE,
     inputSchema: {
       type: 'object',
       properties: {
