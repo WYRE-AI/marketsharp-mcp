@@ -14,6 +14,7 @@ import { connect as netConnect, type AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as client from '../client.js';
 import { startHttpServer } from '../http.js';
+import { MAX_REQUEST_BODY_BYTES } from '../input-limits.js';
 
 const S2S_SECRET = 's2s-do-not-log-7f3a';
 const ENV_API_KEY = 'env-marketsharp-key-must-not-be-used';
@@ -79,6 +80,8 @@ function sendHttp(options: {
   path: string;
   headers?: Record<string, string>;
   body?: string;
+  /** Send the body in pieces with Transfer-Encoding: chunked and no Content-Length. */
+  chunked?: boolean;
 }): Promise<HttpResult> {
   return new Promise((resolve, reject) => {
     const req = httpRequest(
@@ -104,7 +107,14 @@ function sendHttp(options: {
       req.destroy(new Error(`timeout ${options.method} ${options.path}`));
     });
     req.on('error', reject);
-    if (options.body !== undefined) req.write(options.body);
+    if (options.body !== undefined) {
+      if (options.chunked) {
+        const piece = 16 * 1024;
+        for (let at = 0; at < options.body.length; at += piece) req.write(options.body.slice(at, at + piece));
+      } else {
+        req.write(options.body);
+      }
+    }
     req.end();
   });
 }
@@ -462,6 +472,57 @@ describe('HTTP /mcp authentication', () => {
     } finally {
       logs.restore();
     }
+  });
+
+  describe('request body cap', () => {
+    const oversized = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping', params: { pad: 'x'.repeat(MAX_REQUEST_BODY_BYTES + 1) } });
+
+    it('returns 401, not 413, for an oversized declared body without a valid S2S header', async () => {
+      const server = await listen();
+      const { ['x-gateway-s2s']: _drop, ...noS2s } = gatewayHeaders();
+      const response = await sendHttp({ port: server.port, method: 'POST', path: '/mcp', headers: { ...noS2s, 'content-length': String(Buffer.byteLength(oversized)) }, body: oversized });
+      expect(response.status).toBe(401);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('returns 413 with a JSON-RPC error for an oversized declared body and never calls MarketSharp', async () => {
+      const server = await listen();
+      const response = await sendHttp({
+        port: server.port,
+        method: 'POST',
+        path: '/mcp',
+        headers: gatewayHeaders({ 'content-length': String(Buffer.byteLength(oversized)) }),
+        body: oversized,
+      });
+      expect(response.status).toBe(413);
+      const body = JSON.parse(response.body);
+      expect(body.jsonrpc).toBe('2.0');
+      expect(body.error.code).toBe(-32600);
+      expect(body.error.message).toContain(String(MAX_REQUEST_BODY_BYTES));
+      expect(body.id).toBeNull();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('returns 413 for an oversized chunked body with no Content-Length', async () => {
+      const server = await listen();
+      const response = await sendHttp({
+        port: server.port,
+        method: 'POST',
+        path: '/mcp',
+        headers: gatewayHeaders({ 'transfer-encoding': 'chunked' }),
+        body: oversized,
+        chunked: true,
+      });
+      expect(response.status).toBe(413);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('still serves a normal-size request', async () => {
+      const server = await listen();
+      const response = await sendHttp({ port: server.port, method: 'POST', path: '/mcp', headers: gatewayHeaders(), body: groupsCall });
+      expect(response.status).toBe(200);
+      expect(fetchMock).toHaveBeenCalled();
+    });
   });
 
   it('serves /health without authentication and without returning credentials', async () => {
