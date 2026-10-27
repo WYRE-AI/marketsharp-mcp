@@ -16,7 +16,7 @@ import * as client from '../client.js';
 import { startHttpServer } from '../http.js';
 import { MAX_REQUEST_BODY_BYTES } from '../input-limits.js';
 
-const S2S_SECRET = 's2s-do-not-log-7f3a';
+const S2S_SECRET = 's2s-do-not-log-7f3a-0123456789abcdef';
 const ENV_API_KEY = 'env-marketsharp-key-must-not-be-used';
 const HEADER_API_KEY = 'header-marketsharp-key';
 const HEADER_API_SECRET = 'header-marketsharp-secret';
@@ -41,6 +41,7 @@ const ENV_KEYS = [
   'MCP_HTTP_PORT',
   'MCP_HTTP_HOST',
   'AUTH_MODE',
+  'NODE_ENV',
   'MARKETSHARP_COMPANY_ID',
   'MARKETSHARP_API_KEY',
   'MARKETSHARP_API_SECRET',
@@ -193,6 +194,7 @@ beforeEach(() => {
   delete process.env.CONDUIT_S2S_SECRET;
   delete process.env.MCP_ALLOW_INSECURE_DEV;
   delete process.env.AUTH_MODE;
+  process.env.NODE_ENV = 'test';
   delete process.env.MARKETSHARP_COMPANY_ID;
   delete process.env.MARKETSHARP_API_KEY;
   delete process.env.MARKETSHARP_API_SECRET;
@@ -236,6 +238,7 @@ describe('HTTP startup', () => {
 
   it('still refuses when MCP_ALLOW_INSECURE_DEV is not exactly 1', async () => {
     process.env.MCP_ALLOW_INSECURE_DEV = 'true';
+    process.env.NODE_ENV = 'development';
     process.env.CONDUIT_S2S_SECRET = '   ';
     const logs = captureStderr();
     mockExit();
@@ -253,6 +256,7 @@ describe('HTTP startup', () => {
     const configured = `  ${placeholder.toUpperCase()}  `;
     process.env.CONDUIT_S2S_SECRET = configured;
     process.env.MCP_ALLOW_INSECURE_DEV = '1';
+    process.env.NODE_ENV = 'development';
     const logs = captureStderr();
     const exitSpy = mockExit();
 
@@ -273,6 +277,7 @@ describe('HTTP startup', () => {
 
   it('allows startup with a warning when MCP_ALLOW_INSECURE_DEV=1 and binds 127.0.0.1', async () => {
     process.env.MCP_ALLOW_INSECURE_DEV = '1';
+    process.env.NODE_ENV = 'development';
     delete process.env.MCP_HTTP_HOST;
     const logs = captureStderr();
     const exitSpy = mockExit();
@@ -297,6 +302,7 @@ describe('HTTP startup', () => {
     'overrides non-loopback MCP_HTTP_HOST=%s when the dev bypass is on',
     async (host) => {
       process.env.MCP_ALLOW_INSECURE_DEV = '1';
+      process.env.NODE_ENV = 'development';
       process.env.MCP_HTTP_HOST = host;
       const logs = captureStderr();
       const exitSpy = mockExit();
@@ -317,6 +323,7 @@ describe('HTTP startup', () => {
 
   it('forces 127.0.0.1 when the dev bypass host is localhost', async () => {
     process.env.MCP_ALLOW_INSECURE_DEV = '1';
+    process.env.NODE_ENV = 'development';
     process.env.MCP_HTTP_HOST = 'localhost';
     const logs = captureStderr();
 
@@ -343,6 +350,71 @@ describe('HTTP startup', () => {
     } finally {
       logs.restore();
     }
+  });
+
+  it('refuses a 31-character secret without logging it', async () => {
+    const short = 'a1b2c3d4'.repeat(3) + 'e5f6g7h';
+    expect(short).toHaveLength(31);
+    process.env.CONDUIT_S2S_SECRET = short;
+    const logs = captureStderr();
+    const exitSpy = mockExit();
+    try {
+      await expect(startHttpServer()).rejects.toThrow('process.exit:1');
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(logs.text()).toContain('CONDUIT_S2S_SECRET must be at least 32 characters.');
+      expect(logs.text()).not.toContain(short);
+    } finally {
+      logs.restore();
+    }
+  });
+
+  it('starts with a 32-character secret', async () => {
+    process.env.CONDUIT_S2S_SECRET = 'a1b2c3d4'.repeat(4);
+    const exitSpy = mockExit();
+    await listen();
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it.each(['Gateway', 'foo', 'ENV'])('refuses unknown AUTH_MODE %j', async (mode) => {
+    process.env.CONDUIT_S2S_SECRET = S2S_SECRET;
+    process.env.AUTH_MODE = mode;
+    const logs = captureStderr();
+    mockExit();
+    try {
+      await expect(startHttpServer()).rejects.toThrow('process.exit:1');
+      expect(logs.text()).toContain("AUTH_MODE must be 'gateway' or 'env'.");
+      assertNoSecrets(logs.text());
+    } finally {
+      logs.restore();
+    }
+  });
+
+  it.each([
+    ['production', '1'],
+    ['production', 'true'],
+    [undefined, '1'],
+    ['Staging', '1'],
+  ])('with NODE_ENV=%s refuses MCP_ALLOW_INSECURE_DEV=%s, even with an empty secret', async (nodeEnv, flag) => {
+    if (nodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = nodeEnv;
+    process.env.MCP_ALLOW_INSECURE_DEV = flag;
+    const logs = captureStderr();
+    const exitSpy = mockExit();
+    try {
+      await expect(startHttpServer()).rejects.toThrow('process.exit:1');
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(logs.text()).toContain('MCP_ALLOW_INSECURE_DEV requires NODE_ENV=development.');
+    } finally {
+      logs.restore();
+    }
+  });
+
+  it.each(['0', 'false', ''])('ignores MCP_ALLOW_INSECURE_DEV=%j outside development', async (flag) => {
+    process.env.NODE_ENV = 'production';
+    process.env.MCP_ALLOW_INSECURE_DEV = flag;
+    process.env.CONDUIT_S2S_SECRET = S2S_SECRET;
+    mockExit();
+    await listen();
   });
 
   it('binds 0.0.0.0 when a secret is set and MCP_HTTP_HOST is unset', async () => {
@@ -561,9 +633,33 @@ describe('HTTP /mcp authentication', () => {
   );
 });
 
-describe('HTTP /mcp env mode', () => {
-  it('uses MARKETSHARP_* env credentials when AUTH_MODE is not gateway', async () => {
+describe('HTTP /mcp default (unset AUTH_MODE) is gateway', () => {
+  it('returns 401 for a signed request with no credential headers, even with env credentials set', async () => {
     process.env.CONDUIT_S2S_SECRET = S2S_SECRET;
+    process.env.MARKETSHARP_COMPANY_ID = '9999';
+    process.env.MARKETSHARP_API_KEY = ENV_API_KEY;
+    process.env.MARKETSHARP_API_SECRET = 'env-secret';
+    const fetchMock = vi.fn(async () => jsonResponse([]));
+    vi.stubGlobal('fetch', fetchMock);
+    const server = await listen();
+    const response = await sendHttp({
+      port: server.port,
+      method: 'POST',
+      path: '/mcp',
+      headers: mcpHeaders({ 'x-gateway-s2s': mintS2sHeader(S2S_SECRET) }),
+      body: groupsCall,
+    });
+    expect(response.status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+    const health = await sendHttp({ port: server.port, method: 'GET', path: '/health' });
+    expect(JSON.parse(health.body)).toMatchObject({ mode: 'gateway', credentials: { configured: false } });
+  });
+});
+
+describe('HTTP /mcp env mode', () => {
+  it('uses MARKETSHARP_* env credentials when AUTH_MODE=env', async () => {
+    process.env.CONDUIT_S2S_SECRET = S2S_SECRET;
+    process.env.AUTH_MODE = 'env';
     process.env.MARKETSHARP_COMPANY_ID = '9999';
     process.env.MARKETSHARP_API_KEY = ENV_API_KEY;
     process.env.MARKETSHARP_API_SECRET = 'env-secret';

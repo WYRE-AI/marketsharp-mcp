@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearTokenCache,
+  getCredentials,
+  setGatewayMode,
+  runWithCredentials,
   getToken,
   marketsharpRequest,
   MarketSharpAuthError,
@@ -136,6 +139,30 @@ describe('client', () => {
   it('rejects a 200 sign-in without a token', async () => {
     fetchMock.mockResolvedValueOnce(json({}));
     await expect(getToken(creds)).rejects.toThrow("didn't include an access token");
+  });
+
+  describe('getCredentials', () => {
+    const ENV = { MARKETSHARP_COMPANY_ID: '9', MARKETSHARP_API_KEY: 'k', MARKETSHARP_API_SECRET: 's' } as NodeJS.ProcessEnv;
+    afterEach(() => setGatewayMode(false));
+
+    it('reads env credentials when not in gateway mode', () => {
+      expect(getCredentials(ENV)).toMatchObject({ companyId: '9', apiKey: 'k', apiSecret: 's' });
+    });
+
+    it('returns null in gateway mode even with env credentials and no scoped store', () => {
+      setGatewayMode(true);
+      expect(getCredentials(ENV)).toBeNull();
+    });
+
+    it('stdio ignores AUTH_MODE: only the HTTP server turns gateway mode on', () => {
+      // The image sets AUTH_MODE=gateway; MCP_TRANSPORT=stdio in that image must still use env.
+      expect(getCredentials({ ...ENV, AUTH_MODE: 'gateway' })).toMatchObject({ companyId: '9' });
+    });
+
+    it('still returns scoped credentials in gateway mode', () => {
+      setGatewayMode(true);
+      expect(runWithCredentials(creds, () => getCredentials(ENV))).toEqual(creds);
+    });
   });
 
   it('adds api-version, sends the bearer token and renders JSON', async () => {

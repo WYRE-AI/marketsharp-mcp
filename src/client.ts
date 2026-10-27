@@ -1,5 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
+import { MAX_RESPONSE_CHARS } from './input-limits.js';
+import { wrapVendorDetail } from './untrusted.js';
 import { logger } from './utils/logger.js';
 import type { MarketSharpCredentials } from './types.js';
 
@@ -16,8 +18,7 @@ const MAX_BACKOFF_MS = 10_000;
 const DEFAULT_TOKEN_TTL_S = 15 * 60;
 /** Refresh this long before the reported expiry. */
 const TOKEN_SKEW_S = 60;
-/** Cap on the text handed back to the model. */
-export const MAX_RESPONSE_CHARS = 200_000;
+export { MAX_RESPONSE_CHARS };
 
 // ---------------------------------------------------------------------------
 // Request-scoped credentials. Gateway mode runs each HTTP request inside
@@ -29,9 +30,27 @@ export function runWithCredentials<T>(creds: MarketSharpCredentials, fn: () => T
   return credStore.run(creds, fn);
 }
 
+let gatewayMode = false;
+
+/**
+ * Set by the HTTP server at startup. In gateway mode MARKETSHARP_* env is never
+ * read. Stdio never sets it, so stdio always uses env credentials.
+ */
+export function setGatewayMode(on: boolean): void {
+  gatewayMode = on;
+}
+
 export function getCredentials(env: NodeJS.ProcessEnv = process.env): MarketSharpCredentials | null {
   const scoped = credStore.getStore();
   if (scoped) return scoped;
+  if (gatewayMode) {
+    logger.warn('Missing request-scoped MarketSharp credentials in gateway mode', {
+      hasCompanyId: false,
+      hasApiKey: false,
+      hasApiSecret: false,
+    });
+    return null;
+  }
   const companyId = env.MARKETSHARP_COMPANY_ID?.trim();
   const apiKey = env.MARKETSHARP_API_KEY?.trim();
   const apiSecret = env.MARKETSHARP_API_SECRET?.trim();
@@ -120,7 +139,7 @@ export function vendorMessage(text: string): string | undefined {
 function detailSuffix(detail: string | undefined): string {
   if (!detail) return '.';
   const d = detail.trim();
-  return `: ${d}${/[.!?]$/.test(d) ? '' : '.'}`;
+  return `: ${wrapVendorDetail(d)}${/[.!?]$/.test(d) ? '' : '.'}`;
 }
 
 async function mintToken(c: MarketSharpCredentials): Promise<string> {

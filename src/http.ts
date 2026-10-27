@@ -1,7 +1,7 @@
 import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { createServer } from './server.js';
-import { runWithCredentials } from './client.js';
+import { runWithCredentials, setGatewayMode } from './client.js';
 import { logger } from './utils/logger.js';
 import { MAX_REQUEST_BODY_BYTES } from './input-limits.js';
 import { verifyS2sHeader, S2S_HEADER } from './s2s-verify.js';
@@ -9,8 +9,9 @@ import { verifyS2sHeader, S2S_HEADER } from './s2s-verify.js';
 // Gateway service-to-service auth (gateway#377 parity). HTTP startup fails
 // closed: an empty CONDUIT_S2S_SECRET, or a known placeholder, refuses to
 // boot unless MCP_ALLOW_INSECURE_DEV=1 (placeholders never qualify). That
-// bypass skips X-Gateway-S2S and binds 127.0.0.1 only. A configured secret
-// is always enforced and still honors MCP_HTTP_HOST (default 0.0.0.0) so
+// bypass needs NODE_ENV=development, skips X-Gateway-S2S and binds 127.0.0.1
+// only. A configured secret must be at least 32 characters, is always
+// enforced, and still honors MCP_HTTP_HOST (default 0.0.0.0) so
 // container deploys keep their existing bind. The secret value is never logged.
 // See src/s2s-verify.ts.
 
@@ -29,6 +30,10 @@ const KNOWN_PLACEHOLDER_SECRETS = new Set([
 ]);
 
 const LOOPBACK_HOST = '127.0.0.1';
+const MIN_S2S_SECRET_LENGTH = 32;
+
+const SHORT_S2S_SECRET_ERROR = `CONDUIT_S2S_SECRET must be at least ${MIN_S2S_SECRET_LENGTH} characters.`;
+const INSECURE_DEV_ENV_ERROR = 'MCP_ALLOW_INSECURE_DEV requires NODE_ENV=development.';
 
 const MISSING_S2S_SECRET_ERROR =
   'Refusing to start HTTP transport: CONDUIT_S2S_SECRET is empty. ' +
@@ -76,6 +81,29 @@ function refuseStart(message: string): never {
   process.exit(1);
 }
 
+/** True when MCP_ALLOW_INSECURE_DEV is set to anything other than empty, 0 or false. */
+function insecureDevRequested(): boolean {
+  const flag = (process.env.MCP_ALLOW_INSECURE_DEV ?? '').trim().toLowerCase();
+  return flag !== '' && flag !== '0' && flag !== 'false';
+}
+
+/** The dev bypass only works under NODE_ENV=development; any other setting of the flag refuses to start. */
+function checkInsecureDevEnv(): void {
+  if (insecureDevRequested() && (process.env.NODE_ENV ?? '').trim().toLowerCase() !== 'development') {
+    refuseStart(INSECURE_DEV_ENV_ERROR);
+  }
+}
+
+export type AuthMode = 'gateway' | 'env';
+
+/** Unset or empty means gateway. Anything but exactly 'gateway' or 'env' refuses to start. */
+function resolveAuthMode(): AuthMode {
+  const raw = (process.env.AUTH_MODE ?? '').trim();
+  if (raw === '' || raw === 'gateway') return 'gateway';
+  if (raw === 'env') return 'env';
+  return refuseStart(`AUTH_MODE must be 'gateway' or 'env'. Got ${JSON.stringify(raw.slice(0, 40))}.`);
+}
+
 /**
  * Secret for X-Gateway-S2S on /mcp. Read at HTTP startup, not module load.
  * Empty is fail-closed unless MCP_ALLOW_INSECURE_DEV=1. A known placeholder
@@ -86,7 +114,10 @@ function resolveS2sSecret(): string {
   if (secret && KNOWN_PLACEHOLDER_SECRETS.has(secret.toLowerCase())) {
     refuseStart(PLACEHOLDER_S2S_SECRET_ERROR);
   }
-  if (secret) return secret;
+  if (secret) {
+    if (secret.length < MIN_S2S_SECRET_LENGTH) refuseStart(SHORT_S2S_SECRET_ERROR);
+    return secret;
+  }
 
   if (process.env.MCP_ALLOW_INSECURE_DEV === '1') {
     // error level so LOG_LEVEL=warn|error cannot hide the bypass.
@@ -117,10 +148,12 @@ function resolveListenHost(s2sSecret: string): string {
 }
 
 export async function startHttpServer(): Promise<HttpServer> {
+  checkInsecureDevEnv();
+  const isGatewayMode = resolveAuthMode() === 'gateway';
   const s2sSecret = resolveS2sSecret();
   const port = parseInt(process.env.MCP_HTTP_PORT || '8080', 10);
   const host = resolveListenHost(s2sSecret);
-  const isGatewayMode = process.env.AUTH_MODE === 'gateway';
+  setGatewayMode(isGatewayMode);
 
   const httpServer = createHttpServer(async (req, res) => {
     // Only the path matters for routing. Parse against a fixed base so a
@@ -145,9 +178,11 @@ export async function startHttpServer(): Promise<HttpServer> {
           transport: 'http',
           mode: isGatewayMode ? 'gateway' : 'standalone',
           credentials: {
-            configured: Boolean(
-              process.env.MARKETSHARP_COMPANY_ID && process.env.MARKETSHARP_API_KEY && process.env.MARKETSHARP_API_SECRET
-            ),
+            configured:
+              !isGatewayMode &&
+              Boolean(
+                process.env.MARKETSHARP_COMPANY_ID && process.env.MARKETSHARP_API_KEY && process.env.MARKETSHARP_API_SECRET
+              ),
           },
           timestamp: new Date().toISOString(),
         })

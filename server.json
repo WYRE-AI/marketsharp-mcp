@@ -59,9 +59,9 @@
         },
         {
           "name": "AUTH_MODE",
-          "description": "Credential source: 'env' reads vars locally, 'gateway' expects header injection from the WYRE AI gateway.",
+          "description": "HTTP credential source: 'gateway' (default) expects x-marketsharp-* headers from the WYRE AI gateway and never reads MARKETSHARP_* env; 'env' is single-tenant and reads MARKETSHARP_* env. Any other value refuses to start. Stdio always uses env.",
           "isRequired": false,
-          "default": "env",
+          "default": "gateway",
           "format": "string"
         },
         {
