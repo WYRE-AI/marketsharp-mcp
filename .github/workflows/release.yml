@@ -1,10 +1,8 @@
+# Release is manual-only until the first publish is approved.
 name: Release
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 # Thin caller for the canonical reusable release pipeline. The build ->
 # semantic-release -> Docker -> MCP Registry -> security chain lives in
