@@ -465,7 +465,8 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'marketsharp_contact_notes_create',
     tier: 'write',
-    description: 'Add a new note to a contact. It never edits or removes an existing note.' + EMPLOYEE_NOTE,
+    description:
+      'Add a new note to a contact. It never edits or removes an existing note. Needs an employee: pass employeeId or set an Employee ID on the connection, whose MarketSharp permissions it runs with.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -516,7 +517,7 @@ export const TOOLS: ToolDef[] = [
     name: 'marketsharp_activities_create',
     tier: 'write',
     description:
-      'Create a new activity (to-do, call or follow-up) on a contact, optionally tied to an inquiry, appointment or job. MarketSharp automation rules do not run for activities created this way. It never edits an existing activity.' + EMPLOYEE_NOTE,
+      "Create a new activity (to-do, call or follow-up) on a contact, optionally tied to an inquiry, appointment or job. MarketSharp automation rules don't run for it, and it never edits an existing activity. If the connection has an Employee ID, it's recorded as the scheduler.",
     inputSchema: {
       type: 'object',
       properties: {

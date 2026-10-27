@@ -1,5 +1,5 @@
 import type { Tool, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
-import { getCredentials, marketsharpRequest } from '../client.js';
+import { getCredentials, MarketSharpApiError, marketsharpRequest } from '../client.js';
 import { TOOLS, type ToolDef, type ToolTier } from './definitions.js';
 
 export { TOOLS } from './definitions.js';
@@ -49,7 +49,7 @@ export async function dispatchToolCall(
   const tool = BY_NAME.get(name);
   if (!tool) return errorResult(`Unknown tool: ${name}`);
   if (tool.tier === 'write' && !writesEnabled(env)) {
-    return errorResult(`${name} is turned off. Making changes in MarketSharp is off by default for this connection.`);
+    return errorResult(`${name} is turned off because creating records in MarketSharp is off for this connection. An admin can turn it on with MARKETSHARP_ENABLE_WRITES=true.`);
   }
   try {
     const creds = getCredentials(env);
@@ -59,6 +59,18 @@ export async function dispatchToolCall(
     const text = tool.run ? await tool.run(args, creds) : await marketsharpRequest(creds, tool.build!(args, creds));
     return { content: [{ type: 'text', text }] };
   } catch (err) {
-    return errorResult((err as Error).message);
+    const message = (err as Error).message;
+    const status = err instanceof MarketSharpApiError ? err.status : undefined;
+    const unreachable = message.startsWith("Couldn't reach MarketSharp:");
+    // Token-step failures happen before any request is sent and already say when to retry.
+    const signInFailure = message.startsWith('MarketSharp sign-in failed');
+    if (!signInFailure && (unreachable || (status !== undefined && status >= 500))) {
+      return errorResult(
+        tool.tier === 'write'
+          ? `${message} The create may already have gone through. Check MarketSharp before trying again, or you may create a duplicate.`
+          : `${message} Try again in a minute.`
+      );
+    }
+    return errorResult(message);
   }
 }

@@ -116,6 +116,13 @@ export function vendorMessage(text: string): string | undefined {
   }
 }
 
+/** Ends a sentence: ": detail." (no doubled period when the detail already ends in punctuation) or just ".". */
+function detailSuffix(detail: string | undefined): string {
+  if (!detail) return '.';
+  const d = detail.trim();
+  return `: ${d}${/[.!?]$/.test(d) ? '' : '.'}`;
+}
+
 async function mintToken(c: MarketSharpCredentials): Promise<string> {
   const form = new URLSearchParams({
     grant_type: 'password',
@@ -142,11 +149,11 @@ async function mintToken(c: MarketSharpCredentials): Promise<string> {
       const detail = vendorMessage(text);
       throw new MarketSharpAuthError(
         `MarketSharp rejected the Company ID, API key or API secret (HTTP ${res.status})` +
-          (detail ? `: ${detail}` : '.') +
-          ' Check the key under Admin → API maintenance in MarketSharp.'
+          detailSuffix(detail) +
+          ' Check the key and secret under Admin → Apps & Add-ons Setup → API maintenance in MarketSharp.'
       );
     }
-    throw new MarketSharpApiError(`MarketSharp sign-in failed (HTTP ${res.status}).`, res.status);
+    throw new MarketSharpApiError(`MarketSharp sign-in failed on MarketSharp's side (HTTP ${res.status}). Try again in a few minutes.`, res.status);
   }
   let token: unknown;
   let expiresIn: unknown;
@@ -246,8 +253,9 @@ export function renderBody(text: string): string {
 /**
  * Call MarketSharp with a cached bearer token. A 401 triggers exactly one
  * token refresh and retry; 429 (any method) and 503 (GET only) back off
- * (Retry-After honored). Redirects
- * are refused so the bearer token never leaves restapi.marketsharpm.com.
+ * (Retry-After honored). A 503 on a POST (searches, filtered lists and the
+ * create tools) is returned, not retried, since a create may already have
+ * been saved. Redirects are refused so the bearer token never leaves restapi.marketsharpm.com.
  */
 export async function marketsharpRequest(creds: MarketSharpCredentials | null, req: MarketSharpRequest): Promise<string> {
   if (!creds) {
@@ -268,7 +276,10 @@ export async function marketsharpRequest(creds: MarketSharpCredentials | null, r
     try {
       res = await fetch(url, { method: req.method, headers, body, redirect: 'error', signal: AbortSignal.timeout(timeout) });
     } catch (err) {
-      throw new MarketSharpApiError(`Couldn't reach MarketSharp: ${(err as Error).message.slice(0, 200)}`);
+      const timedOut = (err as Error).name === 'TimeoutError';
+      throw new MarketSharpApiError(
+        timedOut ? "Couldn't reach MarketSharp: it didn't respond in time." : "Couldn't reach MarketSharp: the connection failed."
+      );
     }
 
     if (res.status === 401 && !refreshed) {
@@ -290,22 +301,28 @@ export async function marketsharpRequest(creds: MarketSharpCredentials | null, r
     const text = await res.text().catch(() => '');
     if (!res.ok) {
       const detail = vendorMessage(text);
-      const suffix = detail ? `: ${detail}` : '.';
+      const suffix = detailSuffix(detail);
       if (res.status === 401) {
-        throw new MarketSharpAuthError(`MarketSharp didn't accept this connection's sign-in (HTTP 401)${suffix}`);
+        throw new MarketSharpAuthError(`MarketSharp didn't accept this connection's sign-in (HTTP 401)${suffix} Check the Company ID, API key, API secret and Employee ID on this connection.`);
       }
       if (res.status === 403) {
         throw new MarketSharpForbiddenError(
-          `MarketSharp says this API key or employee doesn't have permission for that (HTTP 403)${suffix}`
+          `MarketSharp says this API key or employee doesn't have permission for that (HTTP 403)${suffix} Ask a MarketSharp admin to give the connection's employee that permission, or use a different Employee ID.`
         );
       }
       if (res.status === 429) {
         throw new MarketSharpRateLimitError('MarketSharp is rate-limiting this connection (HTTP 429). Try again shortly.');
       }
       if (res.status === 404) {
-        throw new MarketSharpApiError(`MarketSharp couldn't find that record (HTTP 404)${suffix}`, 404);
+        throw new MarketSharpApiError(`MarketSharp couldn't find that record (HTTP 404)${suffix} Check the ID, or look the record up with marketsharp_search_global.`, 404);
       }
-      throw new MarketSharpApiError(`MarketSharp returned HTTP ${res.status}${suffix}`, res.status);
+      // Reginald's wording is for server-side failures; other statuses (e.g. 400) keep the neutral text.
+      throw new MarketSharpApiError(
+        res.status >= 500
+          ? `MarketSharp had a problem on its side (HTTP ${res.status})${suffix}`
+          : `MarketSharp returned HTTP ${res.status}${suffix}`,
+        res.status
+      );
     }
     return renderBody(text);
   }

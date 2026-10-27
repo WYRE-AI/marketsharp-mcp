@@ -6,9 +6,8 @@ read access to a home-improvement contractor's contacts, inquiries (leads),
 appointments, jobs, notes and reference lists, plus four create-only write tools
 that are off by default.
 
-Built by WYRE for [Conduit](https://conduit.wyre.ai) (Linear WYREAI-526). It runs
-as a stdio server locally or as a stateless Streamable HTTP sidecar behind the
-Conduit gateway.
+Maintained by WYRE AI. It runs as a stdio server locally or as a stateless
+Streamable HTTP server behind a gateway.
 
 ## Credentials
 
@@ -21,9 +20,9 @@ token, caches it per credential set, and refreshes it on expiry or a 401.
 | `MARKETSHARP_COMPANY_ID` | `x-marketsharp-company-id` | yes | Shown under your username, top right in MarketSharp |
 | `MARKETSHARP_API_KEY` | `x-marketsharp-api-key` | yes | Admin → Apps & Add-ons Setup → API maintenance → Create New API Key |
 | `MARKETSHARP_API_SECRET` | `x-marketsharp-api-secret` | yes | Issued with the API key. If there's no secret, MarketSharp support has to turn on API access |
-| `MARKETSHARP_EMPLOYEE_ID` | `x-marketsharp-employee-id` | no | MarketSharp employee ID. Search and note tools need it and act with that employee's permissions |
+| `MARKETSHARP_EMPLOYEE_ID` | `x-marketsharp-employee-id` | no | MarketSharp employee ID. The contact, inquiry and job search tools, `marketsharp_notes_list` and `marketsharp_contact_notes_create` need it, and act with that employee's permissions |
 
-Use a dedicated MarketSharp admin/API employee rather than a person's login.
+Use a dedicated MarketSharp employee set up for API access rather than a person's login.
 The server never uses MarketSharp usernames or passwords.
 
 ## Tools (29)
@@ -63,10 +62,10 @@ endpoints are upserts. These tools never send a record id, so they only create:
 
 | Tool | Endpoint | Notes |
 |---|---|---|
-| `marketsharp_contact_notes_create` | `POST …/notes/contactNote` | Needs an employee |
+| `marketsharp_contact_notes_create` | `POST …/notes/contactNote` | Needs an employee: pass `employeeId` or set an Employee ID on the connection |
 | `marketsharp_inquiry_notes_create` | `POST …/opportunities/notes` | |
 | `marketsharp_activities_create` | `POST …/activities` | MarketSharp automation rules don't run |
-| `marketsharp_appointments_create` | `POST …/appointments` | Reads the inquiry first (`isAppointmentRequired=false`, so a lead with no appointment yet is found) and sends its address, coordinates and notes back unchanged, because MarketSharp's save rewrites them. Refuses to book if the inquiry response is missing any of those fields |
+| `marketsharp_appointments_create` | `POST …/appointments` | Reads the inquiry first and sends its address and notes back unchanged, because MarketSharp's save would otherwise blank them. Won't book if MarketSharp doesn't return those fields |
 
 There are no delete tools. The REST API has no endpoint to create a contact or an
 inquiry (lead), so this server can't either.
@@ -92,8 +91,11 @@ health check probes `/health` only when `MCP_TRANSPORT=http`.
 
 - MarketSharp doesn't publish rate limits. The server retries 429 with
   `Retry-After` or exponential backoff (3 tries). A 503 is retried only for
-  reads: the create tools return it instead of retrying, since the record may
-  already have been saved and retrying could create a duplicate.
+  GET requests. Searches and filtered lists (which use POST) and the create
+  tools return it instead. For a create, the record may already have been
+  saved, so retrying could create a duplicate. A create that times out or hits
+  a server error says so and tells the user to check MarketSharp before trying
+  again.
 - The `/token` 200 response shape isn't documented. The server accepts
   `access_token` or `token`, top level or inside `response`, or a bare JWT
   body (plain or JSON-quoted).
@@ -108,12 +110,7 @@ npm test        # vitest
 npm run lint    # tsc --noEmit
 ```
 
-Releases are cut by semantic-release on `main` through
-`WYRE-AI/reusable-workflows` (`mcp-server-release.yml`), publishing
-`ghcr.io/wyre-ai/marketsharp-mcp`. The image build stamps the release version
-(the `VERSION` build arg) into `package.json`, so the server reports it. Release notes are published on the
-GitHub Release for each version; like the rest of the fleet, `main` is
-branch-protected, so the release job doesn't commit `CHANGELOG.md` back.
+Each release publishes `ghcr.io/wyre-ai/marketsharp-mcp`, and its release notes are on the GitHub Release for that version.
 
 ## License
 

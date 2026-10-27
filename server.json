@@ -25,21 +25,21 @@
         },
         {
           "name": "MARKETSHARP_API_KEY",
-          "description": "API key from MarketSharp Admin > API maintenance.",
+          "description": "API key from MarketSharp: Admin → Apps & Add-ons Setup → API maintenance → Create New API Key.",
           "isRequired": true,
           "isSecret": true,
           "format": "string"
         },
         {
           "name": "MARKETSHARP_API_SECRET",
-          "description": "API secret issued with the API key.",
+          "description": "API secret issued with the API key. If there's no secret, ask MarketSharp support to turn on API access.",
           "isRequired": true,
           "isSecret": true,
           "format": "string"
         },
         {
           "name": "MARKETSHARP_EMPLOYEE_ID",
-          "description": "Optional MarketSharp employee ID. Search and note tools need it and act with that employee's permissions.",
+          "description": "Optional MarketSharp employee ID. The contact, inquiry and job search tools, marketsharp_notes_list and marketsharp_contact_notes_create need it, and act with that employee's permissions.",
           "isRequired": false,
           "format": "string"
         },

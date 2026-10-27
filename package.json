@@ -32,7 +32,7 @@
     "msp",
     "model-context-protocol"
   ],
-  "author": "WYRE Technology",
+  "author": "WYRE AI",
   "license": "Apache-2.0",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0"

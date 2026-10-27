@@ -5,7 +5,7 @@ import { runWithCredentials } from './client.js';
 import { logger } from './utils/logger.js';
 import { verifyS2sHeader, S2S_HEADER } from './s2s-verify.js';
 
-// Conduit service-to-service auth (gateway#377 parity). HTTP startup fails
+// Gateway service-to-service auth (gateway#377 parity). HTTP startup fails
 // closed: an empty CONDUIT_S2S_SECRET, or a known placeholder, refuses to
 // boot unless MCP_ALLOW_INSECURE_DEV=1 (placeholders never qualify). That
 // bypass skips X-Gateway-S2S and binds 127.0.0.1 only. A configured secret
@@ -50,7 +50,7 @@ const S2S_UNAUTHORIZED = {
 
 const GATEWAY_CREDENTIALS_UNAUTHORIZED = {
   error:
-    'Unauthorized: missing required gateway credential headers x-marketsharp-company-id, x-marketsharp-api-key and x-marketsharp-api-secret',
+    'Missing MarketSharp credentials: send the x-marketsharp-company-id, x-marketsharp-api-key and x-marketsharp-api-secret headers.',
 };
 
 const INVALID_ID_HEADER = {

@@ -1,10 +1,10 @@
 /**
- * Verifies the Conduit gateway's service-to-service auth header
+ * Verifies the gateway's service-to-service auth header
  * (gateway#377 parity - closes the confused-deputy gap where a compromised
  * sibling sidecar in the shared ACA environment could otherwise impersonate
  * the gateway to this container).
  *
- * Near-verbatim port of Conduit's `verifyS2sHeader` (src/proxy/s2s.ts) -
+ * Near-verbatim port of the gateway's `verifyS2sHeader` (src/proxy/s2s.ts) -
  * intentionally unchanged logic, ported once and kept in sync. `secret` is
  * treated as an opaque value: the gateway derives a per-vendor subkey from
  * its master secret and this container is provisioned (via
