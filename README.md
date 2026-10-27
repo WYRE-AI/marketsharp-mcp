@@ -82,9 +82,23 @@ MARKETSHARP_COMPANY_ID=… MARKETSHARP_API_KEY=… MARKETSHARP_API_SECRET=… no
 ```
 
 HTTP (`MCP_TRANSPORT=http`, `/mcp` + `/health`) refuses to start without a real
-`CONDUIT_S2S_SECRET` and requires a valid `X-Gateway-S2S` header on every `/mcp`
-request. With `AUTH_MODE=gateway` (the image default) credentials come only from
-the `x-marketsharp-*` headers; env credentials are never used as a fallback.
+`CONDUIT_S2S_SECRET` (at least 32 characters, not a known placeholder) and
+requires a valid `X-Gateway-S2S` header on every `/mcp` request.
+
+- `AUTH_MODE` is `gateway` (the default when unset) or `env`. Any other value
+  refuses to start. In `gateway` mode credentials come only from the
+  `x-marketsharp-*` headers; `MARKETSHARP_*` env is never read. `env` is for a
+  single tenant and reads `MARKETSHARP_*` from the environment. Stdio always
+  uses the environment.
+- `MCP_ALLOW_INSECURE_DEV=1` lets HTTP start without a secret, on 127.0.0.1
+  only, and requires `NODE_ENV=development`. With any other `NODE_ENV` the
+  server refuses to start.
+- Tool output is MarketSharp data that other people may have typed (lead
+  forms, notes, names). Every successful result is escaped and wrapped in
+  `<untrusted-content nonce="…">` markers behind a notice telling the model
+  not to follow instructions inside it. MarketSharp's own error text is
+  wrapped the same way.
+
 See `.env.example`. The create tools stay off unless `MARKETSHARP_ENABLE_WRITES=true`.
 It's set once per container and applies to every connection that container serves;
 `docker-compose.yml` passes it through and defaults it to `false`. The image's

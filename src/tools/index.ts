@@ -1,5 +1,6 @@
 import type { Tool, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { getCredentials, MarketSharpApiError, marketsharpRequest } from '../client.js';
+import { wrapUntrusted } from '../untrusted.js';
 import { TOOLS, type ToolDef, type ToolTier } from './definitions.js';
 
 export { TOOLS } from './definitions.js';
@@ -49,7 +50,7 @@ export async function dispatchToolCall(
   const tool = BY_NAME.get(name);
   if (!tool) return errorResult(`Unknown tool: ${name}`);
   if (tool.tier === 'write' && !writesEnabled(env)) {
-    return errorResult(`${name} is turned off because creating records in MarketSharp is off on this server. An admin can turn it on with MARKETSHARP_ENABLE_WRITES=true.`);
+    return errorResult(`${name} is turned off because creating records in MarketSharp is off in this container. An admin can turn it on with MARKETSHARP_ENABLE_WRITES=true.`);
   }
   try {
     const creds = getCredentials(env);
@@ -57,7 +58,7 @@ export async function dispatchToolCall(
       return errorResult('MarketSharp credentials are not configured. Set the Company ID, API key and API secret on this connection.');
     }
     const text = tool.run ? await tool.run(args, creds) : await marketsharpRequest(creds, tool.build!(args, creds));
-    return { content: [{ type: 'text', text }] };
+    return { content: [{ type: 'text', text: wrapUntrusted(text) }] };
   } catch (err) {
     const message = (err as Error).message;
     const status = err instanceof MarketSharpApiError ? err.status : undefined;
