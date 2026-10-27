@@ -59,7 +59,7 @@
         },
         {
           "name": "AUTH_MODE",
-          "description": "Credential source: 'env' reads vars locally, 'gateway' expects header injection from the WYRE MCP Gateway.",
+          "description": "Credential source: 'env' reads vars locally, 'gateway' expects header injection from the WYRE AI gateway.",
           "isRequired": false,
           "default": "env",
           "format": "string"

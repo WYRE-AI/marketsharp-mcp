@@ -140,8 +140,10 @@ async function mintToken(c: MarketSharpCredentials): Promise<string> {
       redirect: 'error',
       signal: AbortSignal.timeout(TOKEN_TIMEOUT_MS),
     });
-  } catch (err) {
-    throw new MarketSharpApiError(`Couldn't reach MarketSharp to sign in: ${(err as Error).message.slice(0, 200)}`);
+  } catch {
+    throw new MarketSharpApiError(
+      "Couldn't reach MarketSharp to sign in. Check your network and try again in a few minutes."
+    );
   }
   const text = await res.text().catch(() => '');
   if (!res.ok) {
@@ -316,7 +318,7 @@ export async function marketsharpRequest(creds: MarketSharpCredentials | null, r
       if (res.status === 404) {
         throw new MarketSharpApiError(`MarketSharp couldn't find that record (HTTP 404)${suffix} Check the ID, or look the record up with marketsharp_search_global.`, 404);
       }
-      // Reginald's wording is for server-side failures; other statuses (e.g. 400) keep the neutral text.
+      // The "problem on its side" wording is for server-side failures; other statuses (e.g. 400) keep the neutral text.
       throw new MarketSharpApiError(
         res.status >= 500
           ? `MarketSharp had a problem on its side (HTTP ${res.status})${suffix}`

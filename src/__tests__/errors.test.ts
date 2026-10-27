@@ -136,4 +136,14 @@ describe('503 on POST reads', () => {
     ).rejects.toThrow('HTTP 503');
     expect(fetchMock.mock.calls.filter(([u]) => !String(u).endsWith('/token'))).toHaveLength(1);
   });
+
+  it('gives a next step when MarketSharp is unreachable during sign-in, hiding the raw text', async () => {
+    fetchMock.mockImplementation(async () => {
+      throw new Error('getaddrinfo ENOTFOUND restapi.marketsharpm.com');
+    });
+    const text = await callText(READ);
+    expect(text).toContain("Couldn't reach MarketSharp to sign in. Check your network and try again in a few minutes.");
+    expect(text).not.toContain('ENOTFOUND');
+    expect(text).not.toContain('Try again in a minute');
+  });
 });
