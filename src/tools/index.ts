@@ -49,7 +49,7 @@ export async function dispatchToolCall(
   const tool = BY_NAME.get(name);
   if (!tool) return errorResult(`Unknown tool: ${name}`);
   if (tool.tier === 'write' && !writesEnabled(env)) {
-    return errorResult(`${name} is turned off because creating records in MarketSharp is off for this connection. An admin can turn it on with MARKETSHARP_ENABLE_WRITES=true.`);
+    return errorResult(`${name} is turned off because creating records in MarketSharp is off on this server. An admin can turn it on with MARKETSHARP_ENABLE_WRITES=true.`);
   }
   try {
     const creds = getCredentials(env);

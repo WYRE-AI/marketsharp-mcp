@@ -62,10 +62,17 @@ describe('tool surface', () => {
     expect(w.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: false });
   });
 
+  it('declares additionalProperties: false on every tool schema', () => {
+    for (const t of listTools(WRITES_ON)) expect(t.inputSchema.additionalProperties, t.name).toBe(false);
+    for (const t of TOOLS) expect(t.inputSchema.additionalProperties, t.name).toBe(false);
+  });
+
   it('refuses a hidden write called by name without touching MarketSharp', async () => {
     const { result } = await call('marketsharp_contact_notes_create', { contactId: 'c', note: 'n' }, {} as NodeJS.ProcessEnv);
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('turned off');
+    expect(result.content[0].text).toContain('on this server');
+    expect(result.content[0].text).not.toContain('this connection');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

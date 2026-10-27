@@ -57,8 +57,10 @@ Reads (25, always on):
 | `marketsharp_product_interests_list` | `GET …/products/interests/{activeOnly}` or per inquiry |
 | `marketsharp_divisions_list` | `GET …/divisions` |
 
-Writes (4, hidden unless `MARKETSHARP_ENABLE_WRITES=true`). MarketSharp's save
-endpoints are upserts. These tools never send a record id, so they only create:
+Writes (4, hidden unless `MARKETSHARP_ENABLE_WRITES=true`). The setting is
+container-wide: it turns writes on for every connection that container serves,
+not for one connection. MarketSharp's save endpoints are upserts. These tools
+never send a record id, so they only create:
 
 | Tool | Endpoint | Notes |
 |---|---|---|
@@ -83,7 +85,8 @@ HTTP (`MCP_TRANSPORT=http`, `/mcp` + `/health`) refuses to start without a real
 `CONDUIT_S2S_SECRET` and requires a valid `X-Gateway-S2S` header on every `/mcp`
 request. With `AUTH_MODE=gateway` (the image default) credentials come only from
 the `x-marketsharp-*` headers; env credentials are never used as a fallback.
-See `.env.example`. The create tools stay off unless `MARKETSHARP_ENABLE_WRITES=true`;
+See `.env.example`. The create tools stay off unless `MARKETSHARP_ENABLE_WRITES=true`.
+It's set once per container and applies to every connection that container serves;
 `docker-compose.yml` passes it through and defaults it to `false`. The image's
 health check probes `/health` only when `MCP_TRANSPORT=http`.
 
@@ -99,6 +102,8 @@ health check probes `/health` only when `MCP_TRANSPORT=http`.
 - The `/token` 200 response shape isn't documented. The server accepts
   `access_token` or `token`, top level or inside `response`, or a bare JWT
   body (plain or JSON-quoted).
+- HTTP request bodies are capped at 256 KiB (262,144 bytes). Larger bodies,
+  declared or chunked, get a 413.
 - Responses are capped at 200,000 characters; narrow with filters or paging.
 - Not covered: calendar, texting, email, PaySimple, QuickBooks, CompanyCam,
   automation rules, analytics, estimates (v1 only), and all admin/config writes.

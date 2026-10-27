@@ -81,7 +81,7 @@ function unwrapRecord(text: string): Record<string, unknown> | undefined {
   }
 }
 
-export const TOOLS: ToolDef[] = [
+const TOOL_DEFS: ToolDef[] = [
   // ---------------------------------------------------------------- company
   {
     name: 'marketsharp_companies_list',
@@ -624,3 +624,9 @@ export const TOOLS: ToolDef[] = [
     },
   },
 ];
+
+/** Every schema declares additionalProperties: false. Advisory to clients; the server doesn't reject unknown args. */
+export const TOOLS: ToolDef[] = TOOL_DEFS.map((t) => ({
+  ...t,
+  inputSchema: { ...t.inputSchema, additionalProperties: false },
+}));

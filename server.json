@@ -45,7 +45,7 @@
         },
         {
           "name": "MARKETSHARP_ENABLE_WRITES",
-          "description": "Set to true to expose the 4 create tools (notes, activities, appointments). Off by default. There are no delete tools.",
+          "description": "Set to true to expose the 4 create tools (notes, activities, appointments). Server-wide: applies to every connection this container serves, not per connection. Off by default. There are no delete tools.",
           "isRequired": false,
           "default": "false",
           "format": "string"
