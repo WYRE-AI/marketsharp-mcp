@@ -1,0 +1,29 @@
+# Release is manual-only until the first publish is approved.
+name: Release
+
+on:
+  workflow_dispatch:
+
+# Thin caller for the canonical reusable release pipeline. The build ->
+# semantic-release -> Docker -> MCP Registry -> security chain lives in
+# WYRE-AI/reusable-workflows so every *-mcp repo stays in lockstep instead
+# of drifting per-repo. PR-time lint/test gating is test.yml's concern; this
+# workflow only runs the release path.
+# No default token scopes; the release job grants exactly what the reusable
+# pipeline needs below.
+permissions: {}
+
+jobs:
+  release:
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      packages: write
+      id-token: write
+      security-events: write
+    uses: WYRE-AI/reusable-workflows/.github/workflows/mcp-server-release.yml@fbc1e9864c3c591f0d76c46b1de750489614fe0b
+    with:
+      server-name: marketsharp-mcp
+      image-name: ghcr.io/wyre-ai/marketsharp-mcp
+    secrets: inherit
