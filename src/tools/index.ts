@@ -1,5 +1,6 @@
 import type { Tool, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { getCredentials, MarketSharpApiError, marketsharpRequest } from '../client.js';
+import { MAX_RESPONSE_CHARS } from '../input-limits.js';
 import { wrapUntrusted } from '../untrusted.js';
 import { TOOLS, type ToolDef, type ToolTier } from './definitions.js';
 
@@ -58,7 +59,8 @@ export async function dispatchToolCall(
       return errorResult('MarketSharp credentials are not configured. Set the Company ID, API key and API secret on this connection.');
     }
     const text = tool.run ? await tool.run(args, creds) : await marketsharpRequest(creds, tool.build!(args, creds));
-    return { content: [{ type: 'text', text: wrapUntrusted(text) }] };
+    // renderBody already capped `text` and appended its own truncation note; leave room for that note.
+    return { content: [{ type: 'text', text: wrapUntrusted(text, MAX_RESPONSE_CHARS + 1_000) }] };
   } catch (err) {
     const message = (err as Error).message;
     const status = err instanceof MarketSharpApiError ? err.status : undefined;

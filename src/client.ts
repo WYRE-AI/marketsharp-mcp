@@ -142,6 +142,15 @@ function detailSuffix(detail: string | undefined): string {
   return `: ${wrapVendorDetail(d)}${/[.!?]$/.test(d) ? '' : '.'}`;
 }
 
+/** Logs why a fetch failed (error name and cause code only: no URL, headers, body or credentials). */
+function logFetchFailure(message: string, method: string, err: unknown): void {
+  logger.warn(message, {
+    method,
+    name: (err as Error)?.name,
+    code: (err as { cause?: { code?: unknown } })?.cause?.code,
+  });
+}
+
 async function mintToken(c: MarketSharpCredentials): Promise<string> {
   const form = new URLSearchParams({
     grant_type: 'password',
@@ -159,7 +168,8 @@ async function mintToken(c: MarketSharpCredentials): Promise<string> {
       redirect: 'error',
       signal: AbortSignal.timeout(TOKEN_TIMEOUT_MS),
     });
-  } catch {
+  } catch (err) {
+    logFetchFailure('MarketSharp sign-in request failed', 'POST', err);
     throw new MarketSharpApiError(
       "Couldn't reach MarketSharp to sign in. Check your network and try again in a few minutes."
     );
@@ -297,6 +307,7 @@ export async function marketsharpRequest(creds: MarketSharpCredentials | null, r
     try {
       res = await fetch(url, { method: req.method, headers, body, redirect: 'error', signal: AbortSignal.timeout(timeout) });
     } catch (err) {
+      logFetchFailure('MarketSharp request failed', req.method, err);
       const timedOut = (err as Error).name === 'TimeoutError';
       throw new MarketSharpApiError(
         timedOut ? "Couldn't reach MarketSharp: it didn't respond in time." : "Couldn't reach MarketSharp: the connection failed."

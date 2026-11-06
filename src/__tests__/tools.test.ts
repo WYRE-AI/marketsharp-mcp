@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearTokenCache, runWithCredentials } from '../client.js';
+import { MAX_RESPONSE_CHARS } from '../input-limits.js';
 import { dispatchToolCall, listTools, TOOLS } from '../tools/index.js';
 import { UNTRUSTED_NOTICE, wrapUntrusted } from '../untrusted.js';
 import { unwrapToolText } from './unwrap.js';
@@ -295,6 +296,15 @@ describe('untrusted content envelope', () => {
 
   it('caps long text with a truncation note', () => {
     expect(wrapUntrusted('x'.repeat(50), 10)).toContain('xxxxxxxxxx[truncated 40 chars]');
+  });
+
+  it("keeps renderBody's truncation note on oversized responses", async () => {
+    fetchMock.mockImplementation(async (url: string) =>
+      String(url).endsWith('/token') ? json({ access_token: 'tk' }) : new Response('x'.repeat(MAX_RESPONSE_CHARS + 500)));
+    const { result } = await call('marketsharp_divisions_list', {}, NO_WRITES);
+    const inner = unwrapToolText(result.content[0].text);
+    expect(inner).toContain('[truncated 500 characters. Narrow the request');
+    expect(inner).not.toMatch(/\[truncated \d+ chars\]$/);
   });
 
   it('leaves our own error messages plain', async () => {
