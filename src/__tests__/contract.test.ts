@@ -15,6 +15,7 @@ import {
   MAX_RESPONSE_CHARS,
   MAX_UPSTREAM_BYTES,
   marketsharpRequest,
+  renderBody,
   runWithCredentials,
   setGatewayMode,
 } from '../client.js';
@@ -433,5 +434,81 @@ describe('client guards', () => {
   it('marketsharpRequest refuses a path that is not exactly what was built', async () => {
     await expect(marketsharpRequest(creds, { method: 'GET', path: '/companies/%2e%2e/token' })).rejects.toThrow();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('no write path to MarketSharp', () => {
+  it.each([
+    '/companies/123/contacts',
+    '/companies/123/appointments',
+    '/companies/123/opportunities/notes',
+    '/companies/123/contacts/search/extra',
+    '/companies/123/employees/filter',
+  ])('refuses POST %s before signing in', async (path) => {
+    vendor(() => json([]));
+    await expect(marketsharpRequest(creds, { method: 'POST', path, body: {} })).rejects.toThrow('read-only');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['PUT', 'PATCH', 'DELETE'])('refuses %s before signing in', async (method) => {
+    vendor(() => json([]));
+    const req = { method, path: '/companies/123/contacts/c1' } as unknown as Parameters<typeof marketsharpRequest>[1];
+    await expect(marketsharpRequest(creds, req)).rejects.toThrow('read-only');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('every tool sends a GET, or a POST to one of the read-only search and filter routes', async () => {
+    vendor(() => json([]));
+    for (const tool of TOOLS) {
+      const args = Object.fromEntries(
+        Object.entries(tool.inputSchema.properties).map(([k, p]) => {
+          const prop = p as { type?: string; enum?: unknown[]; minimum?: number };
+          return [k, prop.enum?.[0] ?? (prop.type === 'integer' ? (prop.minimum ?? 1) : prop.type === 'boolean' ? true : prop.type === 'array' ? ['x'] : 'x')];
+        }),
+      );
+      const { result } = await run(tool.name, args);
+      expect(result.isError, `${tool.name}: ${result.content[0].text}`).toBeFalsy();
+    }
+    expect(vendorCalls()).toHaveLength(TOOLS.length);
+    for (const [, init] of vendorCalls()) expect(['GET', 'POST']).toContain(init.method);
+  });
+});
+
+describe('pagination-safe truncation', () => {
+  const NOTE = /\n…\[truncated: only the first (\d+) of (\d+) records/;
+  const record = (i: number) => ({ id: `r${i}`, notes: 'n'.repeat(500) });
+  const split = (text: string) => {
+    const at = text.search(NOTE);
+    expect(at, 'no record-count truncation note').toBeGreaterThan(0);
+    const [, kept, total] = NOTE.exec(text)!;
+    return { body: JSON.parse(text.slice(0, at)), kept: Number(kept), total: Number(total), note: text.slice(at) };
+  };
+
+  it('an oversized array keeps whole records and says how many were left out', () => {
+    const rows = Array.from({ length: 1000 }, (_, i) => record(i));
+    const text = renderBody(JSON.stringify(rows));
+    const { body, kept, total, note } = split(text);
+    expect(Array.isArray(body)).toBe(true);
+    expect(body).toHaveLength(kept);
+    expect(body[kept - 1]).toEqual(record(kept - 1));
+    expect(total).toBe(1000);
+    expect(kept).toBeGreaterThan(0);
+    expect(text.length - note.length).toBeLessThanOrEqual(MAX_RESPONSE_CHARS);
+    expect(note).toContain(`at most ${kept}`);
+  });
+
+  it.each(['rows', 'response', 'data', 'items'])('an oversized page keeps its paging fields and shrinks only %s', (key) => {
+    const page = { pageNumber: 2, rowsPerPage: 1000, totalPageCount: 7, meta: { message: 'OK' }, [key]: Array.from({ length: 1000 }, (_, i) => record(i)) };
+    const { body, kept, total } = split(renderBody(JSON.stringify(page)));
+    expect(body).toMatchObject({ pageNumber: 2, rowsPerPage: 1000, totalPageCount: 7, meta: { message: 'OK' } });
+    expect(body[key]).toHaveLength(kept);
+    expect(total).toBe(1000);
+  });
+
+  it('records are redacted before they are measured', () => {
+    const rows = Array.from({ length: 1000 }, (_, i) => ({ ...record(i), apiKey: 'leak-value-123' }));
+    const text = renderBody(JSON.stringify(rows), [API_SECRET]);
+    expect(text).not.toContain('leak-value-123');
+    split(text);
   });
 });

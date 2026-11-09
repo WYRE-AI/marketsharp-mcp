@@ -78,6 +78,9 @@ their notes are also on [GitHub Releases](https://github.com/WYRE-AI/marketsharp
 - MarketSharp calls stop when the gateway client disconnects: the fetch and
   any 429 backoff are aborted instead of running on with the tenant's token
   for up to about a minute. The shared `/token` mint keeps only its timeout.
+- The client refuses any MarketSharp request that isn't a GET or a POST to one
+  of the eight read-only search and filter routes, before minting a token, so
+  no tool or later change can write to MarketSharp.
 - Log lines redact the access tokens used in the current HTTP request by exact
   match, so an opaque (non-JWT) token is caught too.
 - A full token cache (500 credential sets) drops expired tokens and then the
@@ -85,6 +88,10 @@ their notes are also on [GitHub Releases](https://github.com/WYRE-AI/marketsharp
 
 ### Fixed
 
+- An oversized list response is cut at a record boundary instead of mid-text:
+  paging fields (`pageNumber`, `totalPageCount`, `meta`) are kept and a note
+  gives how many records were left out and the page size that fits, so a cut
+  page is never read as the last one.
 - Tool descriptions no longer state MarketSharp defaults the spec doesn't
   document (`numberOfRecords` on the searches, `rowsPerPage` on the contact
   and appointment filters). `marketsharp_opportunities_list` says it can't

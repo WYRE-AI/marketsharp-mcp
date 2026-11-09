@@ -341,11 +341,26 @@ export async function getToken(c: MarketSharpCredentials, forceRefresh = false):
 }
 
 export interface MarketSharpRequest {
+  /** POST only for READ_ONLY_POST_ROUTES; anything else is refused before sign-in. */
   method: 'GET' | 'POST';
   /** Path relative to the host, every dynamic segment already passed through encodeSegment(). */
   path: string;
   query?: Record<string, string | number | boolean | undefined>;
   body?: unknown;
+}
+
+/**
+ * MarketSharp serves its searches and filtered lists only as POST, with the
+ * query in the body. These are the only POST routes this server calls; any
+ * other POST, and any PUT, PATCH or DELETE, is refused before a token is
+ * minted, so no tool (or future bug) can write to MarketSharp.
+ */
+const READ_ONLY_POST_ROUTES =
+  /^\/companies\/[^/]+\/(?:search\/global|contacts\/(?:search|filter)|inquiries\/(?:search|filter)|appointments\/filter|jobs\/(?:search|opportunities))$/;
+
+function assertReadOnly(req: MarketSharpRequest): void {
+  if (req.method === 'GET' || (req.method === 'POST' && READ_ONLY_POST_ROUTES.test(req.path))) return;
+  throw new MarketSharpApiError('This server is read-only: that MarketSharp request is not a read, so it was not sent.');
 }
 
 /**
@@ -384,27 +399,69 @@ export function buildUrl(path: string, query: MarketSharpRequest['query'] = {}):
   return url;
 }
 
+/** Where a list response keeps its records: the body itself, or one of these fields (SimplePagingModel uses `rows`). */
+const LIST_FIELDS = ['rows', 'response', 'data', 'items'] as const;
+
+/** The records of a list response, and how to rebuild the response with only the first n of them. */
+function listOf(value: unknown): { records: unknown[]; keep: (n: number) => unknown } | undefined {
+  if (Array.isArray(value)) return { records: value, keep: (n) => value.slice(0, n) };
+  if (!value || typeof value !== 'object') return undefined;
+  const page = value as Record<string, unknown>;
+  const field = LIST_FIELDS.find((f) => Array.isArray(page[f]));
+  if (!field) return undefined;
+  const records = page[field] as unknown[];
+  return { records, keep: (n) => ({ ...page, [field]: records.slice(0, n) }) };
+}
+
+/**
+ * Fits an oversized list response under the cap by dropping whole records
+ * from the end. Every other field (pageNumber, totalPageCount, meta) is kept,
+ * and the note says how many records were left out, so the model never
+ * mistakes a cut page for the last one. Undefined when even no records don't fit.
+ */
+function shrinkList(value: unknown, render: (v: unknown) => string): string | undefined {
+  const list = listOf(value);
+  if (!list || render(list.keep(0)).length > MAX_RESPONSE_CHARS) return undefined;
+  // Output length only grows with n, so binary-search the largest n that fits.
+  let lo = 0;
+  let hi = list.records.length - 1;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (render(list.keep(mid)).length <= MAX_RESPONSE_CHARS) lo = mid;
+    else hi = mid - 1;
+  }
+  return (
+    render(list.keep(lo)) +
+    `\n…[truncated: only the first ${lo} of ${list.records.length} records in this response fit; the rest were left out. ` +
+    `Repeat the request asking for at most ${Math.max(lo, 1)} records (rowsPerPage, pageSize or numberOfRecords) and page on, or narrow it with filters.]`
+  );
+}
+
 /**
  * Render a response body for the model: pretty JSON when parseable, redacted
  * of `secrets` and credential-named fields, then capped in size. Redaction
- * runs first so a secret straddling the cap can't leave a prefix behind.
+ * runs first so a secret straddling the cap can't leave a prefix behind. An
+ * oversized list keeps whole records and its paging fields; anything else is
+ * cut as text.
  */
 export function renderBody(text: string, secrets: Secrets = []): string {
   if (!text) return 'OK (no content)';
-  let out = text;
+  const render = (v: unknown) => redactText(JSON.stringify(v, null, 2), secrets);
+  let value: unknown;
+  let out: string;
   try {
-    out = JSON.stringify(redactValue(JSON.parse(text), secrets), null, 2);
+    value = redactValue(JSON.parse(text), secrets);
+    out = render(value);
   } catch {
     // not JSON: return as text
+    out = redactText(text, secrets);
   }
-  out = redactText(out, secrets);
-  if (out.length > MAX_RESPONSE_CHARS) {
-    return (
-      out.slice(0, MAX_RESPONSE_CHARS) +
+  if (out.length <= MAX_RESPONSE_CHARS) return out;
+  return (
+    shrinkList(value, render) ??
+    out.slice(0, MAX_RESPONSE_CHARS) +
       `\n…[truncated ${out.length - MAX_RESPONSE_CHARS} characters. Narrow the request: use filters, a smaller page size, or fewer records.]`
-    );
-  }
-  return out;
+  );
 }
 
 /**
@@ -415,6 +472,7 @@ export function renderBody(text: string, secrets: Secrets = []): string {
  * refused so the bearer token never leaves restapi.marketsharpm.com.
  */
 export async function marketsharpRequest(creds: MarketSharpCredentials | null, req: MarketSharpRequest): Promise<string> {
+  assertReadOnly(req);
   if (!creds) {
     throw new MarketSharpAuthError(
       'MarketSharp credentials are not configured. Set the Company ID, API key and API secret on this connection.'

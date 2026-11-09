@@ -56,6 +56,8 @@ The server never uses MarketSharp usernames or passwords.
 
 There are no create, update or delete tools. Searches and filtered lists use
 POST because that is how MarketSharp exposes them; they don't change data.
+The client only sends GET, or POST to those eight search and filter routes.
+Any other request is refused before sign-in.
 
 ## Running
 
@@ -130,6 +132,8 @@ See `.env.example`. The image's health check probes `/health` only when
 - HTTP request bodies are capped at 256 KiB (262,144 bytes). Larger bodies,
   declared or chunked, get a 413.
 - Responses are capped at 200,000 characters; narrow with filters or paging.
+  An oversized list keeps whole records and its paging fields, and a note
+  says how many records were left out and what page size fits.
 - Not covered: calendar, texting, email, PaySimple, QuickBooks, CompanyCam,
   automation rules, analytics, estimates (v1 only), and all admin/config writes.
 
