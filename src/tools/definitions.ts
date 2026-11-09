@@ -56,7 +56,7 @@ function searchBody(args: Args, extraKeys: string[] = []): Record<string, unknow
 
 const pagingProps = {
   pageNumber: i('Page to return, starting at 1.', 1, 100000),
-  rowsPerPage: i('Rows per page. Keep this small (MarketSharp defaults to 1000).', 1, 1000),
+  rowsPerPage: i('Rows per page. Keep this small (MarketSharp defaults to 1000). Fewer rows than rowsPerPage means this is the last page.', 1, 1000),
 };
 const DEFAULT_ROWS = 100;
 
@@ -174,7 +174,7 @@ const TOOL_DEFS: ToolDef[] = [
         appointmentFrom: s(`Only inquiries with an appointment on or after this time. ${DATE_HINT}`),
         appointmentTo: s(`Only inquiries with an appointment on or before this time. ${DATE_HINT}`),
         salespersonId: s('Only inquiries with appointments for this salesperson (employee ID).'),
-        appointmentRequired: b('Only inquiries that have an appointment.'),
+        appointmentRequired: APPOINTMENT_REQUIRED,
         ...pagingProps,
       },
     },

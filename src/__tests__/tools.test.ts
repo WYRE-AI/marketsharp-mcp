@@ -86,6 +86,28 @@ describe('tool surface', () => {
     const { result } = await call('marketsharp_contacts_delete');
     expect(result.isError).toBe(true);
   });
+
+  const propDescription = (t: (typeof TOOLS)[number], key: string) => (t.inputSchema.properties[key] as { description: string }).description;
+
+  it("warns on every appointmentRequired flag that MarketSharp's default hides inquiries with no appointment", () => {
+    const flagged = TOOLS.filter((t) => 'appointmentRequired' in t.inputSchema.properties);
+    expect(flagged.map((t) => t.name).sort()).toEqual([
+      'marketsharp_inquiries_get',
+      'marketsharp_inquiries_list',
+      'marketsharp_inquiries_list_by_contact',
+    ]);
+    for (const t of flagged) {
+      expect(propDescription(t, 'appointmentRequired'), t.name).toContain('MarketSharp defaults to true, so pass false to include inquiries with no appointment yet.');
+    }
+  });
+
+  it('tells the model how to spot the last page on every filter list', () => {
+    const paged = TOOLS.filter((t) => 'rowsPerPage' in t.inputSchema.properties);
+    expect(paged.map((t) => t.name).sort()).toEqual(['marketsharp_appointments_list', 'marketsharp_contacts_list', 'marketsharp_inquiries_list']);
+    for (const t of paged) {
+      expect(propDescription(t, 'rowsPerPage'), t.name).toContain('Fewer rows than rowsPerPage means this is the last page.');
+    }
+  });
 });
 
 describe('read tools build the documented requests', () => {

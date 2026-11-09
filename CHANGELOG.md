@@ -25,11 +25,17 @@ their notes are also on [GitHub Releases](https://github.com/WYRE-AI/marketsharp
 - Vendor request id (`x-request-id`, `request-id` or `x-correlation-id`) in
   error messages when MarketSharp sends one.
 - Optional `appointmentRequired` (MarketSharp `isAppointmentRequired`) on
-  `marketsharp_inquiries_get` and `marketsharp_inquiries_list_by_contact`.
+  `marketsharp_inquiries_get`, `marketsharp_inquiries_list` and
+  `marketsharp_inquiries_list_by_contact`. Each description warns that
   MarketSharp defaults it to true, which hides inquiries with no appointment.
+- The paged filter lists (contacts, inquiries, appointments) say that fewer
+  rows than `rowsPerPage` means the last page.
 - `typecheck`, `lint` (eslint plus the destructive-tool warning lint),
   `lint:destructive` and `smoke` (stdio, no network) scripts, an mcp-assert
   `evals/` suite, and gitleaks, CI and mcp-assert workflows.
+- A test that checks every POST body a tool builds against a vendored, trimmed
+  copy of the MarketSharp v2 request models (keys, required fields, types,
+  enums, query parameters).
 
 ### Changed
 

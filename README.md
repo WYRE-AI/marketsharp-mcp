@@ -35,7 +35,7 @@ The server never uses MarketSharp usernames or passwords.
 | `marketsharp_contacts_search` | `POST …/contacts/search` (QuickFind, needs employee) |
 | `marketsharp_contacts_list` | `POST …/contacts/filter` (paged, modified-since / appointment window) |
 | `marketsharp_inquiries_get` | `GET …/inquiries/{inquiryId}` (optional `isAppointmentRequired`; MarketSharp defaults it to true) |
-| `marketsharp_inquiries_list` | `POST …/inquiries/filter` (paged) |
+| `marketsharp_inquiries_list` | `POST …/inquiries/filter` (paged; optional `isAppointmentRequired`, which MarketSharp defaults to true) |
 | `marketsharp_inquiries_search` | `POST …/inquiries/search` (QuickFind, needs employee) |
 | `marketsharp_inquiries_list_by_contact` | `GET …/contacts/{contactId}/inquiries` (optional `isAppointmentRequired`) |
 | `marketsharp_inquiry_statuses_list` | `GET …/inquiries/statuses` |
