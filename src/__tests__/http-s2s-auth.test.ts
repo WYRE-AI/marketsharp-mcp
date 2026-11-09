@@ -11,6 +11,7 @@
 import { createHmac } from 'node:crypto';
 import { request as httpRequest, type Server } from 'node:http';
 import { connect as netConnect, type AddressInfo } from 'node:net';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as client from '../client.js';
 import { startHttpServer } from '../http.js';
@@ -754,4 +755,39 @@ describe('X-Conduit-Tool-Tiers (reduce-only)', () => {
     expect(await toolNames(server.port, {})).toHaveLength(25);
     expect(await toolNames(server.port, { 'x-conduit-tool-tiers': 'write' })).toEqual([]);
   });
+});
+
+describe('request handler failures', () => {
+  const listCall = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
+
+  it.each(['gateway', 'env'] as const)(
+    'AUTH_MODE=%s: a throw inside the MCP handler becomes a JSON-RPC 500, logs only the error type, and the server keeps serving',
+    async (mode) => {
+      process.env.CONDUIT_S2S_SECRET = S2S_SECRET;
+      process.env.AUTH_MODE = mode;
+      const spy = vi
+        .spyOn(StreamableHTTPServerTransport.prototype, 'handleRequest')
+        .mockRejectedValueOnce(new Error(`boom ${HEADER_API_SECRET}`));
+      const logs = captureStderr();
+      const server = await listen();
+      const headers = mcpHeaders({
+        'x-gateway-s2s': mintS2sHeader(S2S_SECRET),
+        'x-marketsharp-company-id': '4321',
+        'x-marketsharp-api-key': HEADER_API_KEY,
+        'x-marketsharp-api-secret': HEADER_API_SECRET,
+      });
+
+      const failed = await sendHttp({ port: server.port, method: 'POST', path: '/mcp', headers, body: listCall });
+      expect(failed.status).toBe(500);
+      expect(JSON.parse(failed.body)).toEqual({ jsonrpc: '2.0', error: { code: -32603, message: 'Internal error' }, id: null });
+      expect(logs.text()).toContain('"error":"Error"');
+      expect(logs.text()).not.toContain('boom');
+      assertNoSecrets(logs.text() + failed.body);
+      logs.restore();
+
+      spy.mockRestore();
+      const ok = await sendHttp({ port: server.port, method: 'POST', path: '/mcp', headers, body: listCall });
+      expect(ok.status).toBe(200);
+    },
+  );
 });

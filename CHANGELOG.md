@@ -48,6 +48,9 @@ their notes are also on [GitHub Releases](https://github.com/WYRE-AI/marketsharp
 - Page sizes and record counts above the cap are capped instead of rejected.
   `inquiryIds` is limited to the documented 100.
 - Arguments a tool doesn't declare are dropped before the tool runs.
+- An error inside the HTTP `/mcp` handler returns a JSON-RPC 500 and logs
+  only the error type, instead of becoming an unhandled rejection that would
+  stop the process for every tenant.
 - Any `AUTH_MODE` other than unset or `env` now means gateway mode outside HTTP
   too, so `MARKETSHARP_*` env credentials are never read by mistake.
 - HTTP startup also refuses a `CONDUIT_S2S_SECRET` that looks like a

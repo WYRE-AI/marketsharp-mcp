@@ -253,8 +253,20 @@ export async function startHttpServer(): Promise<HttpServer> {
         transport.close();
         server.close();
       });
-      await server.connect(transport);
-      await transport.handleRequest(req, res);
+      // A throw here would otherwise be an unhandled rejection from the
+      // 'request' listener, which kills the process (and every tenant on it)
+      // under Node's default --unhandled-rejections=throw. Log the error type
+      // only: the message may carry request data.
+      try {
+        await server.connect(transport);
+        await transport.handleRequest(req, res);
+      } catch (err) {
+        logger.error('MCP request failed', { error: (err as Error)?.name ?? typeof err });
+        if (!res.headersSent) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32603, message: 'Internal error' }, id: null }));
+        }
+      }
     };
 
     // Gateway mode: the MarketSharp credentials must arrive on every request
