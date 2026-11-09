@@ -1,10 +1,49 @@
 /**
  * Output hygiene for anything returned to the model or written to logs.
- * The API key and secret in use are removed by exact match; bearer tokens and
- * JWTs (the MarketSharp access token) are removed by shape.
+ * The API key, secret and access token in use are removed by exact match;
+ * bearer tokens and JWTs are removed by shape; values under credential-named
+ * JSON keys are removed by name.
+ *
+ * Order matters: redact first, then escape or truncate, so a secret that
+ * contains & < > or straddles a cut can never survive in part.
  */
 
 export const REDACTED = '[REDACTED]';
+
+/** Normalized (lower-case, no `_`/`-`) key names whose string values are credentials. */
+const SENSITIVE_KEYS = new Set([
+  'apikey',
+  'apisecret',
+  'secret',
+  'clientsecret',
+  'password',
+  'authorization',
+  'accesstoken',
+  'refreshtoken',
+]);
+
+function isSensitiveKey(key: string): boolean {
+  return SENSITIVE_KEYS.has(key.toLowerCase().replace(/[_-]/g, ''));
+}
+
+/**
+ * Recursively replaces string values under credential-named keys, and runs
+ * redactText on every other string (before JSON re-escaping can hide a
+ * secret containing `"` or `\`). Returns a new value; the input is not mutated.
+ */
+export function redactValue(value: unknown, knownSecrets: readonly (string | undefined)[] = [], depth = 0): unknown {
+  if (depth > 64) return REDACTED;
+  if (typeof value === 'string') return redactText(value, knownSecrets);
+  if (Array.isArray(value)) return value.map((v) => redactValue(v, knownSecrets, depth + 1));
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = isSensitiveKey(key) && typeof v === 'string' && v.length > 0 ? REDACTED : redactValue(v, knownSecrets, depth + 1);
+    }
+    return out;
+  }
+  return value;
+}
 
 const TEXT_PATTERNS: RegExp[] = [
   /\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi,

@@ -16,7 +16,12 @@ their notes are also on [GitHub Releases](https://github.com/WYRE-AI/marketsharp
 - `X-Conduit-Tool-Tiers` support. `read` is the only tier and the header can
   only narrow it. A present but empty header exposes no tools.
 - Redaction of the API key and secret in use, bearer tokens and JWTs in tool
-  output, tool errors and every log line.
+  output, tool errors and every log line. MarketSharp responses and error text
+  are also redacted of the current access token and of values under
+  credential-named JSON keys (`apiKey`, `secret`, `password`,
+  `authorization`, ...). Redaction runs before any escaping or truncation, so
+  a secret containing `&`, `<` or `>`, or one cut at a size cap, can't survive
+  in part.
 - Vendor request id (`x-request-id`, `request-id` or `x-correlation-id`) in
   error messages when MarketSharp sends one.
 - Optional `appointmentRequired` (MarketSharp `isAppointmentRequired`) on

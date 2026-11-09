@@ -10,6 +10,7 @@
  */
 import { createHash } from 'node:crypto';
 import { MAX_RESPONSE_CHARS } from './input-limits.js';
+import { redactText, redactValue } from './redact.js';
 import { scopedCredentials } from './scope.js';
 import { wrapVendorDetail } from './untrusted.js';
 import { logger } from './utils/logger.js';
@@ -32,6 +33,10 @@ export const MAX_UPSTREAM_BYTES = 4 * 1024 * 1024;
 /** Error and /token bodies are small; read at most this much of them. */
 const MAX_SMALL_BODY_BYTES = 64 * 1024;
 const MAX_SEGMENT = 256;
+/** Longest piece of MarketSharp's own error text quoted in an error message. */
+const MAX_VENDOR_DETAIL = 300;
+/** Values removed by exact match from anything MarketSharp sends back: the key, the secret and the access token in use. */
+type Secrets = readonly (string | undefined)[];
 /** Response headers that may carry a request id for MarketSharp support (which one MarketSharp sends is undocumented). */
 const REQUEST_ID_HEADERS = ['x-request-id', 'request-id', 'x-correlation-id'];
 export { MAX_RESPONSE_CHARS };
@@ -143,17 +148,20 @@ export function vendorMessage(text: string): string | undefined {
       body.message,
       typeof body.response === 'string' ? body.response : undefined,
     ];
-    const found = candidates.find((c) => typeof c === 'string' && c.trim().length > 0) as string | undefined;
-    return found?.slice(0, 300);
+    return candidates.find((c) => typeof c === 'string' && c.trim().length > 0) as string | undefined;
   } catch {
     return undefined;
   }
 }
 
-/** Ends a sentence: ": detail." (no doubled period when the detail already ends in punctuation) or just ".". */
-function detailSuffix(detail: string | undefined): string {
-  if (!detail) return '.';
-  const d = detail.trim();
+/**
+ * Ends a sentence: ": detail." (no doubled period when the detail already
+ * ends in punctuation) or just ".". The vendor text is redacted before it is
+ * cut to MAX_VENDOR_DETAIL and escaped, so no part of a secret survives.
+ */
+function detailSuffix(detail: string | undefined, secrets: Secrets): string {
+  const d = detail === undefined ? '' : redactText(detail, secrets).trim().slice(0, MAX_VENDOR_DETAIL);
+  if (!d) return '.';
   return `: ${wrapVendorDetail(d)}${/[.!?]$/.test(d) ? '' : '.'}`;
 }
 
@@ -239,10 +247,9 @@ async function mintToken(c: MarketSharpCredentials): Promise<string> {
   const text = await readBoundedText(res, MAX_SMALL_BODY_BYTES).catch(() => '');
   if (!res.ok) {
     if (res.status === 400 || res.status === 401 || res.status === 403) {
-      const detail = vendorMessage(text);
       throw new MarketSharpAuthError(
         `MarketSharp rejected the Company ID, API key or API secret (HTTP ${res.status})` +
-          detailSuffix(detail) +
+          detailSuffix(vendorMessage(text), [c.apiKey, c.apiSecret]) +
           ' Check the key and secret under Admin → Apps & Add-ons Setup → API maintenance in MarketSharp.'
       );
     }
@@ -342,15 +349,20 @@ export function buildUrl(path: string, query: MarketSharpRequest['query'] = {}):
   return url;
 }
 
-/** Render a response body for the model: pretty JSON when parseable, capped in size. */
-export function renderBody(text: string): string {
+/**
+ * Render a response body for the model: pretty JSON when parseable, redacted
+ * of `secrets` and credential-named fields, then capped in size. Redaction
+ * runs first so a secret straddling the cap can't leave a prefix behind.
+ */
+export function renderBody(text: string, secrets: Secrets = []): string {
   if (!text) return 'OK (no content)';
   let out = text;
   try {
-    out = JSON.stringify(JSON.parse(text), null, 2);
+    out = JSON.stringify(redactValue(JSON.parse(text), secrets), null, 2);
   } catch {
     // not JSON: return as text
   }
+  out = redactText(out, secrets);
   if (out.length > MAX_RESPONSE_CHARS) {
     return (
       out.slice(0, MAX_RESPONSE_CHARS) +
@@ -379,6 +391,7 @@ export async function marketsharpRequest(creds: MarketSharpCredentials | null, r
 
   for (let attempt = 0; ; attempt++) {
     const token = await getToken(creds, false);
+    const secrets: Secrets = [creds.apiKey, creds.apiSecret, token];
     const headers: Record<string, string> = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     let res: Response;
@@ -409,14 +422,14 @@ export async function marketsharpRequest(creds: MarketSharpCredentials | null, r
       await sleep(Math.min(wait, MAX_BACKOFF_MS));
       continue;
     }
-    if (!res.ok) throw await vendorError(res);
-    return renderBody(await readBoundedText(res, MAX_UPSTREAM_BYTES));
+    if (!res.ok) throw await vendorError(res, secrets);
+    return renderBody(await readBoundedText(res, MAX_UPSTREAM_BYTES), secrets);
   }
 }
 
-async function vendorError(res: Response): Promise<Error> {
+async function vendorError(res: Response, secrets: Secrets): Promise<Error> {
   const text = await readBoundedText(res, MAX_SMALL_BODY_BYTES).catch(() => '');
-  const suffix = detailSuffix(vendorMessage(text));
+  const suffix = detailSuffix(vendorMessage(text), secrets);
   const requestId = vendorRequestId(res);
   const rid = requestId ? ` (MarketSharp request id: ${requestId})` : '';
   const status = res.status;

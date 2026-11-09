@@ -12,6 +12,7 @@ import {
   encodeSegment,
   getCredentials,
   getToken,
+  MAX_RESPONSE_CHARS,
   MAX_UPSTREAM_BYTES,
   marketsharpRequest,
   runWithCredentials,
@@ -21,6 +22,7 @@ import { ALL_TIERS, configuredTiers, narrowTiers } from '../config.js';
 import { REDACTED, redactText } from '../redact.js';
 import { dispatchToolCall, listTools, pickDeclaredArgs, TOOLS } from '../tools/index.js';
 import { logger } from '../utils/logger.js';
+import { unwrapToolText } from './unwrap.js';
 
 const API_KEY = 'ms-key-6c1f0e2a-not-real';
 const API_SECRET = 'ms-secret-9b7d4c3e-not-real';
@@ -118,6 +120,68 @@ describe('credential redaction', () => {
     const { text } = await run('marketsharp_divisions_list');
     expect(text).toContain('rejected');
     expect(text).not.toContain(API_SECRET);
+  });
+
+  describe('redacts before escaping and truncating', () => {
+    const SPECIAL = { companyId: '123', apiKey: 'KEY-abcdef-0123456789', apiSecret: 'Sec<ret&Value>1234567890abcdef' };
+    const TAIL = '1234567890abcdef';
+    const runAs = async (name: string) =>
+      (await runWithCredentials(SPECIAL, () => dispatchToolCall(name, {}, {} as NodeJS.ProcessEnv))).content[0].text;
+
+    it('a vendor error echoing a secret with & < > is redacted, raw or escaped', async () => {
+      vendor(() => json({ meta: { message: `bad secret ${SPECIAL.apiSecret}` } }, 401));
+      const text = await runAs('marketsharp_divisions_list');
+      expect(text).not.toContain(TAIL);
+      expect(text).toContain(REDACTED);
+    });
+
+    it('a rejected sign-in echoing a secret with & < > is redacted', async () => {
+      fetchMock.mockResolvedValue(json({ error_description: `apisecret ${SPECIAL.apiSecret} is wrong` }, 400));
+      const text = await runAs('marketsharp_divisions_list');
+      expect(text).toContain('rejected');
+      expect(text).not.toContain(TAIL);
+    });
+
+    it('a vendor error message cut at 300 characters keeps no prefix of a secret', async () => {
+      vendor(() => json({ meta: { message: 'm'.repeat(296) + SPECIAL.apiKey } }, 400));
+      expect(await runAs('marketsharp_divisions_list')).not.toContain('KEY-');
+    });
+
+    it('a secret straddling the response cap keeps no prefix', async () => {
+      vendor(() => new Response('x'.repeat(MAX_RESPONSE_CHARS - 4) + SPECIAL.apiKey + 'y'.repeat(100)));
+      const text = await runAs('marketsharp_divisions_list');
+      expect(text).toContain('[truncated');
+      expect(text).not.toContain('KEY-');
+    });
+
+    it('values under credential-named keys are redacted in JSON bodies', async () => {
+      vendor(() =>
+        json({ name: 'Main', apiKey: 'other-key-value-1', Password: 'hunter2hunter2', nested: [{ client_secret: 'cs-value-123' }], authorization: 'Basic abc' }),
+      );
+      const text = await runAs('marketsharp_divisions_list');
+      expect(JSON.parse(unwrapToolText(text))).toEqual({
+        name: 'Main',
+        apiKey: REDACTED,
+        Password: REDACTED,
+        nested: [{ client_secret: REDACTED }],
+        authorization: REDACTED,
+      });
+    });
+
+    it('an opaque (non-JWT) access token echoed back is redacted, in results and errors', async () => {
+      const OPAQUE = 'opaque-token-value-42';
+      fetchMock.mockImplementation(async (url: string) =>
+        String(url).endsWith('/token') ? json({ access_token: OPAQUE }) : json({ echoed: `token=${OPAQUE}` }),
+      );
+      expect(await runAs('marketsharp_divisions_list')).not.toContain(OPAQUE);
+      clearTokenCache();
+      fetchMock.mockImplementation(async (url: string) =>
+        String(url).endsWith('/token') ? json({ access_token: OPAQUE }) : json({ meta: { message: `token ${OPAQUE} denied` } }, 403),
+      );
+      const error = await runAs('marketsharp_divisions_list');
+      expect(error).toContain('HTTP 403');
+      expect(error).not.toContain(OPAQUE);
+    });
   });
 
   it('a successful body that echoes a credential is redacted', async () => {
