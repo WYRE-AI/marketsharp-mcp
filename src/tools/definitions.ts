@@ -1,7 +1,7 @@
 import { encodeSegment, MarketSharpApiError, type MarketSharpRequest } from '../client.js';
 import type { ToolTier } from '../config.js';
 import type { MarketSharpCredentials } from '../types.js';
-import { compact, optBool, optEnum, optInt, optLimit, optString, optStringArray, reqString, type Args } from './args.js';
+import { compact, optBool, optEnum, optInt, optString, optStringArray, reqString, type Args } from './args.js';
 
 export type { ToolTier };
 
@@ -39,7 +39,7 @@ const searchProps = {
   city: s('City.'),
   state: s('State, e.g. MI.'),
   zip: s('ZIP code.'),
-  numberOfRecords: i('Most records to return.', 1, 500),
+  numberOfRecords: i('Most records to return (default 25).', 1, 500),
 };
 const SEARCH_KEYS = Object.keys(searchProps).filter((k) => k !== 'numberOfRecords');
 
@@ -50,7 +50,8 @@ function searchBody(args: Args, extraKeys: string[] = []): Record<string, unknow
   if (!keys.some((k) => body[k] !== undefined)) {
     throw new MarketSharpApiError(`Give at least one search field: ${keys.join(', ')}.`);
   }
-  body.numberOfRecords = optLimit(args, 'numberOfRecords', 1, 500);
+  // Always sent: it is a non-nullable int32 on the QuickFind models, so leaving it out would send 0.
+  body.numberOfRecords = optInt(args, 'numberOfRecords', 1, 500) ?? 25;
   return compact(body);
 }
 
@@ -58,7 +59,13 @@ const pagingProps = {
   pageNumber: i('Page to return, starting at 1.', 1, 100000),
   rowsPerPage: i('Rows per page (default 100). Fewer rows than rowsPerPage means this is the last page.', 1, 1000),
 };
-const DEFAULT_ROWS = 100;
+
+/** The pageNumber/rowsPerPage body fields of a filter list, and the same page as paging info for the response note. */
+function filterPage(args: Args) {
+  const page = optInt(args, 'pageNumber', 1, 100000) ?? 1;
+  const size = optInt(args, 'rowsPerPage', 1, 1000) ?? 100;
+  return { body: { pageNumber: page, rowsPerPage: size }, paging: { pageArg: 'pageNumber', page, sizeArg: 'rowsPerPage', size } };
+}
 
 const TOOL_DEFS: ToolDef[] = [
   // ---------------------------------------------------------------- company
@@ -96,7 +103,7 @@ const TOOL_DEFS: ToolDef[] = [
       body: {
         entry: reqString(a, 'query', 200),
         searchObjectType: optEnum(a, 'type', ['All', 'Contact', 'Inquiry', 'Job'] as const) ?? 'All',
-        numberOfRecords: optLimit(a, 'numberOfRecords', 1, 200) ?? 25,
+        numberOfRecords: optInt(a, 'numberOfRecords', 1, 200) ?? 25,
         multiCompany: false,
       },
     }),
@@ -131,18 +138,21 @@ const TOOL_DEFS: ToolDef[] = [
         ...pagingProps,
       },
     },
-    build: (a, c) => ({
-      method: 'POST',
-      path: `${company(c)}/contacts/filter`,
-      body: compact({
-        start_modified_datetime: optString(a, 'modifiedSince', 40),
-        start_appointment_datetime: optString(a, 'appointmentFrom', 40),
-        end_appointment_datetime: optString(a, 'appointmentTo', 40),
-        appointment_salesperson_id: optString(a, 'salespersonId', 64),
-        pageNumber: optInt(a, 'pageNumber', 1, 100000) ?? 1,
-        rowsPerPage: optLimit(a, 'rowsPerPage', 1, 1000) ?? DEFAULT_ROWS,
-      }),
-    }),
+    build: (a, c) => {
+      const { body, paging } = filterPage(a);
+      return {
+        method: 'POST',
+        path: `${company(c)}/contacts/filter`,
+        body: compact({
+          start_modified_datetime: optString(a, 'modifiedSince', 40),
+          start_appointment_datetime: optString(a, 'appointmentFrom', 40),
+          end_appointment_datetime: optString(a, 'appointmentTo', 40),
+          appointment_salesperson_id: optString(a, 'salespersonId', 64),
+          ...body,
+        }),
+        paging,
+      };
+    },
   },
   // -------------------------------------------------------------- inquiries
   {
@@ -178,20 +188,23 @@ const TOOL_DEFS: ToolDef[] = [
         ...pagingProps,
       },
     },
-    build: (a, c) => ({
-      method: 'POST',
-      path: `${company(c)}/inquiries/filter`,
-      query: { isAppointmentRequired: optBool(a, 'appointmentRequired') },
-      body: compact({
-        start_modified_datetime: optString(a, 'modifiedFrom', 40),
-        end_modified_datetime: optString(a, 'modifiedTo', 40),
-        start_appointment_datetime: optString(a, 'appointmentFrom', 40),
-        end_appointment_datetime: optString(a, 'appointmentTo', 40),
-        appointment_salesperson_id: optString(a, 'salespersonId', 64),
-        pageNumber: optInt(a, 'pageNumber', 1, 100000) ?? 1,
-        rowsPerPage: optLimit(a, 'rowsPerPage', 1, 1000) ?? DEFAULT_ROWS,
-      }),
-    }),
+    build: (a, c) => {
+      const { body, paging } = filterPage(a);
+      return {
+        method: 'POST',
+        path: `${company(c)}/inquiries/filter`,
+        query: { isAppointmentRequired: optBool(a, 'appointmentRequired') },
+        body: compact({
+          start_modified_datetime: optString(a, 'modifiedFrom', 40),
+          end_modified_datetime: optString(a, 'modifiedTo', 40),
+          start_appointment_datetime: optString(a, 'appointmentFrom', 40),
+          end_appointment_datetime: optString(a, 'appointmentTo', 40),
+          appointment_salesperson_id: optString(a, 'salespersonId', 64),
+          ...body,
+        }),
+        paging,
+      };
+    },
   },
   {
     name: 'marketsharp_inquiries_search',
@@ -230,7 +243,7 @@ const TOOL_DEFS: ToolDef[] = [
     name: 'marketsharp_inquiry_notes_list',
     tier: 'read',
     description:
-      "List the notes on an inquiry (lead), or on the job created from it. Needs an Employee ID on the connection, and that employee needs MarketSharp's View Opportunity Note permission.",
+      "List the notes on an inquiry (lead), or on the job created from it. Needs MarketSharp's View Opportunity Note permission.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -274,20 +287,23 @@ const TOOL_DEFS: ToolDef[] = [
         ...pagingProps,
       },
     },
-    build: (a, c) => ({
-      method: 'POST',
-      path: `${company(c)}/appointments/filter`,
-      body: compact({
-        start_appointment_datetime: optString(a, 'appointmentFrom', 40),
-        end_appointment_datetime: optString(a, 'appointmentTo', 40),
-        start_modified_datetime: optString(a, 'modifiedFrom', 40),
-        end_modified_datetime: optString(a, 'modifiedTo', 40),
-        appointment_salesperson_id: optString(a, 'salespersonId', 64),
-        inquiry_ids: optStringArray(a, 'inquiryIds'),
-        pageNumber: optInt(a, 'pageNumber', 1, 100000) ?? 1,
-        rowsPerPage: optLimit(a, 'rowsPerPage', 1, 1000) ?? DEFAULT_ROWS,
-      }),
-    }),
+    build: (a, c) => {
+      const { body, paging } = filterPage(a);
+      return {
+        method: 'POST',
+        path: `${company(c)}/appointments/filter`,
+        body: compact({
+          start_appointment_datetime: optString(a, 'appointmentFrom', 40),
+          end_appointment_datetime: optString(a, 'appointmentTo', 40),
+          start_modified_datetime: optString(a, 'modifiedFrom', 40),
+          end_modified_datetime: optString(a, 'modifiedTo', 40),
+          appointment_salesperson_id: optString(a, 'salespersonId', 64),
+          inquiry_ids: optStringArray(a, 'inquiryIds'),
+          ...body,
+        }),
+        paging,
+      };
+    },
   },
   {
     name: 'marketsharp_appointments_list_by_contact',
@@ -332,7 +348,9 @@ const TOOL_DEFS: ToolDef[] = [
     tier: 'read',
     description:
       'List opportunities (jobs and leads) changed since a date, with job numbers, sale and contract dates, contract totals, contract status and balance due. ' +
-      'Returns at most numberOfRecords (max 1000) with no paging; if you get exactly that many, narrow fromDate.',
+      'Returns at most numberOfRecords (max 1000) with no paging. If you get exactly that many, the list may be incomplete: ' +
+      'raise numberOfRecords (up to 1000), and say the result may be incomplete if it is already 1000. ' +
+      "Needs MarketSharp's View Opportunity permission.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -344,7 +362,7 @@ const TOOL_DEFS: ToolDef[] = [
     build: (a, c) => ({
       method: 'POST',
       path: `${company(c)}/jobs/opportunities`,
-      body: { fromDate: reqString(a, 'fromDate', 40), numberOfRecords: optLimit(a, 'numberOfRecords', 1, 1000) ?? 100 },
+      body: { fromDate: reqString(a, 'fromDate', 40), numberOfRecords: optInt(a, 'numberOfRecords', 1, 1000) ?? 100 },
     }),
   },
   // ------------------------------------------------------------------ notes
@@ -394,16 +412,16 @@ const TOOL_DEFS: ToolDef[] = [
         pageSize: i('Employees per page (default 100).', 1, 500),
       },
     },
-    build: (a, c) => ({
-      method: 'GET',
-      path: `${company(c)}/employees`,
-      query: {
-        s: optString(a, 'search', 100),
-        isActiveOnly: optBool(a, 'activeOnly') ?? true,
-        page: optInt(a, 'page', 1, 10000) ?? 1,
-        pageSize: optLimit(a, 'pageSize', 1, 500) ?? 100,
-      },
-    }),
+    build: (a, c) => {
+      const page = optInt(a, 'page', 1, 10000) ?? 1;
+      const size = optInt(a, 'pageSize', 1, 500) ?? 100;
+      return {
+        method: 'GET',
+        path: `${company(c)}/employees`,
+        query: { s: optString(a, 'search', 100), isActiveOnly: optBool(a, 'activeOnly') ?? true, page, pageSize: size },
+        paging: { pageArg: 'page', page, sizeArg: 'pageSize', size },
+      };
+    },
   },
   {
     name: 'marketsharp_lead_sources_list',
@@ -430,7 +448,8 @@ const TOOL_DEFS: ToolDef[] = [
   {
     name: 'marketsharp_product_interests_list',
     tier: 'read',
-    description: "List the company's product interests (e.g. Windows, Siding), or the ones attached to one inquiry (lead).",
+    description:
+      "List the company's product interests (e.g. Windows, Siding), or the ones attached to one inquiry (lead). Needs MarketSharp's View Product Interest permission.",
     inputSchema: {
       type: 'object',
       properties: {

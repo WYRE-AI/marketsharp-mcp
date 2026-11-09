@@ -2,7 +2,8 @@
  * Output hygiene for anything returned to the model or written to logs.
  * The API key, secret and access token in use are removed by exact match;
  * bearer tokens and JWTs are removed by shape; values under credential-named
- * JSON keys are removed by name.
+ * JSON keys (exact names, or any name ending in password or secret) are
+ * removed by name.
  *
  * Order matters: redact first, then escape or truncate, so a secret that
  * contains & < > or straddles a cut can never survive in part.
@@ -11,19 +12,12 @@
 export const REDACTED = '[REDACTED]';
 
 /** Normalized (lower-case, no `_`/`-`) key names whose string values are credentials. */
-const SENSITIVE_KEYS = new Set([
-  'apikey',
-  'apisecret',
-  'secret',
-  'clientsecret',
-  'password',
-  'authorization',
-  'accesstoken',
-  'refreshtoken',
-]);
+const SENSITIVE_KEYS = new Set(['apikey', 'authorization', 'token', 'accesstoken', 'refreshtoken']);
 
+/** Exact names above, plus any name ending in `password` or `secret` (smtpPassword, webhook_secret, apiSecret). */
 function isSensitiveKey(key: string): boolean {
-  return SENSITIVE_KEYS.has(key.toLowerCase().replace(/[_-]/g, ''));
+  const name = key.toLowerCase().replace(/[_-]/g, '');
+  return SENSITIVE_KEYS.has(name) || name.endsWith('password') || name.endsWith('secret');
 }
 
 /**

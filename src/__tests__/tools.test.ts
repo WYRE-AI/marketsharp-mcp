@@ -101,15 +101,23 @@ describe('tool surface', () => {
     }
   });
 
-  it('names the View Opportunity Note permission on inquiry_notes_list', () => {
-    const t = TOOLS.find((x) => x.name === 'marketsharp_inquiry_notes_list')!;
-    expect(t.description).toContain('Needs an Employee ID on the connection');
-    expect(t.description).toContain('View Opportunity Note permission');
+  // The spec names a permission on these routes; an Employee ID it requires only for the searches and notes_list.
+  it.each([
+    ['marketsharp_inquiry_notes_list', 'View Opportunity Note permission'],
+    ['marketsharp_opportunities_list', 'View Opportunity permission'],
+    ['marketsharp_product_interests_list', 'View Product Interest permission'],
+  ])('%s names the %s the spec requires', (name, permission) => {
+    const t = TOOLS.find((x) => x.name === name)!;
+    expect(t.description).toContain(permission);
+    expect(t.description).not.toContain('Employee ID');
   });
 
-  it('warns that opportunities_list cannot page', () => {
+  it('warns that opportunities_list cannot page and does not suggest moving fromDate', () => {
     const t = TOOLS.find((x) => x.name === 'marketsharp_opportunities_list')!;
-    expect(t.description).toContain('Returns at most numberOfRecords (max 1000) with no paging; if you get exactly that many, narrow fromDate.');
+    expect(t.description).toContain(
+      'Returns at most numberOfRecords (max 1000) with no paging. If you get exactly that many, the list may be incomplete: raise numberOfRecords (up to 1000), and say the result may be incomplete if it is already 1000.',
+    );
+    expect(t.description).not.toMatch(/narrow fromDate/);
   });
 
   it("states no MarketSharp default the spec doesn't document", () => {
@@ -135,7 +143,7 @@ describe('read tools build the documented requests', () => {
     ['marketsharp_companies_get', {}, 'GET', '/companies/123'],
     ['marketsharp_search_global', { query: 'Smith', type: 'contact' }, 'POST', '/companies/123/search/global',
       { entry: 'Smith', searchObjectType: 'Contact', numberOfRecords: 25, multiCompany: false }],
-    ['marketsharp_contacts_get', { contactId: 'a b' }, 'GET', '/companies/123/contacts/a%20b'],
+    ['marketsharp_contacts_get', { contactId: 'c-1' }, 'GET', '/companies/123/contacts/c-1'],
     ['marketsharp_contacts_search', { last_name: 'Smith', numberOfRecords: 5 }, 'POST', '/companies/123/contacts/search',
       { last_name: 'Smith', numberOfRecords: 5 }],
     ['marketsharp_contacts_list', { modifiedSince: '2026-10-01' }, 'POST', '/companies/123/contacts/filter',
@@ -144,7 +152,7 @@ describe('read tools build the documented requests', () => {
     ['marketsharp_inquiries_list', { modifiedFrom: '2026-10-01', appointmentRequired: true, rowsPerPage: 10 }, 'POST',
       '/companies/123/inquiries/filter?isAppointmentRequired=true',
       { start_modified_datetime: '2026-10-01', pageNumber: 1, rowsPerPage: 10 }],
-    ['marketsharp_inquiries_search', { phone_number: '6165551212' }, 'POST', '/companies/123/inquiries/search', { phone_number: '6165551212' }],
+    ['marketsharp_inquiries_search', { phone_number: '6165551212' }, 'POST', '/companies/123/inquiries/search', { phone_number: '6165551212', numberOfRecords: 25 }],
     ['marketsharp_inquiries_list_by_contact', { contactId: 'c1' }, 'GET', '/companies/123/contacts/c1/inquiries'],
     ['marketsharp_inquiry_statuses_list', { includeInactive: true }, 'GET', '/companies/123/inquiries/statuses?includeInactive=true'],
     ['marketsharp_inquiry_notes_list', { inquiryId: 'i1', noteType: 'job' }, 'GET', '/companies/123/opportunities/i1/notes/Job'],
@@ -156,7 +164,7 @@ describe('read tools build the documented requests', () => {
     ['marketsharp_appointment_results_list', {}, 'GET', '/companies/123/appointments/results/active'],
     ['marketsharp_appointment_results_list', { reasons: true }, 'GET', '/companies/123/appointments/resultreasons/active'],
     ['marketsharp_jobs_get', { jobId: 'j1' }, 'GET', '/companies/123/jobs/j1'],
-    ['marketsharp_jobs_search', { job_number: '1001' }, 'POST', '/companies/123/jobs/search', { job_number: '1001' }],
+    ['marketsharp_jobs_search', { job_number: '1001' }, 'POST', '/companies/123/jobs/search', { job_number: '1001', numberOfRecords: 25 }],
     ['marketsharp_opportunities_list', { fromDate: '2026-01-01' }, 'POST', '/companies/123/jobs/opportunities',
       { fromDate: '2026-01-01', numberOfRecords: 100 }],
     ['marketsharp_notes_list', { contactId: 'c1' }, 'GET', '/companies/123/notes/contact/c1'],

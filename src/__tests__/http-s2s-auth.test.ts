@@ -659,7 +659,7 @@ describe('HTTP /mcp authentication', () => {
   );
 
   describe('method, Host allowlist and caching', () => {
-    it.each(['GET', 'DELETE', 'PUT'])('a signed %s /mcp gets 405 with Allow: POST and never opens a stream', async (method) => {
+    it.each(['GET', 'DELETE', 'PUT', 'OPTIONS'])('a signed %s /mcp gets 405 with Allow: POST and never opens a stream', async (method) => {
       const server = await listen();
       const response = await sendHttp({
         port: server.port,
@@ -678,6 +678,20 @@ describe('HTTP /mcp authentication', () => {
       const { ['x-gateway-s2s']: _drop, ...noS2s } = gatewayHeaders();
       const response = await sendHttp({ port: server.port, method: 'GET', path: '/mcp', headers: noS2s });
       expect(response.status).toBe(401);
+    });
+
+    it('an unsigned CORS preflight (OPTIONS with Origin) is 401 and grants no CORS access', async () => {
+      const server = await listen();
+      const { ['x-gateway-s2s']: _drop, ...noS2s } = gatewayHeaders();
+      const response = await sendHttp({
+        port: server.port,
+        method: 'OPTIONS',
+        path: '/mcp',
+        headers: { ...noS2s, origin: 'https://evil.example', 'access-control-request-method': 'POST' },
+      });
+      expect(response.status).toBe(401);
+      expect(Object.keys(response.headers).filter((h) => h.startsWith('access-control-'))).toEqual([]);
+      expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it('MCP_ALLOWED_HOSTS rejects other Host headers with 403 before S2S, and accepts a listed host with or without a port', async () => {

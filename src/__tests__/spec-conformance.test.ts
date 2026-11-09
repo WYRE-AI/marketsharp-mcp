@@ -10,7 +10,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import type { MarketSharpRequest } from '../client.js';
+import { isReadOnlyRequest, type MarketSharpRequest } from '../client.js';
 import { TOOLS, type ToolDef } from '../tools/index.js';
 
 interface Model {
@@ -90,6 +90,7 @@ describe('every request matches a MarketSharp v2 route and its declared query pa
     for (const req of requests) {
       const route = modelFor(req.method, req.path);
       expect(route, `no spec route for ${req.method} ${req.path}`).toBeDefined();
+      expect(isReadOnlyRequest(req), `${req.method} ${req.path} is not on the client's read-only allowlist`).toBe(true);
       for (const [key, value] of Object.entries(req.query ?? {})) {
         if (value !== undefined) expect(route!.query, `${req.method} ${req.path} query ${key}`).toHaveProperty(key);
       }

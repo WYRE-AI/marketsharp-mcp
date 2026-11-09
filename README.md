@@ -39,25 +39,26 @@ The server never uses MarketSharp usernames or passwords.
 | `marketsharp_inquiries_search` | `POST …/inquiries/search` (QuickFind, needs employee) |
 | `marketsharp_inquiries_list_by_contact` | `GET …/contacts/{contactId}/inquiries` (optional `isAppointmentRequired`) |
 | `marketsharp_inquiry_statuses_list` | `GET …/inquiries/statuses` |
-| `marketsharp_inquiry_notes_list` | `GET …/opportunities/{inquiryId}/notes/{Inquiry\|Job}` |
+| `marketsharp_inquiry_notes_list` | `GET …/opportunities/{inquiryId}/notes/{Inquiry\|Job}` (needs View Opportunity Note) |
 | `marketsharp_appointments_get` | `GET …/appointments/{appointmentId}` |
 | `marketsharp_appointments_list` | `POST …/appointments/filter` (paged) |
 | `marketsharp_appointments_list_by_contact` | `GET …/appointments/contacts/{contactId}` |
 | `marketsharp_appointment_results_list` | `GET …/appointments/results/active` or `resultreasons/active` |
 | `marketsharp_jobs_get` | `GET …/jobs/{jobId}` |
 | `marketsharp_jobs_search` | `POST …/jobs/search` (QuickFind, needs employee) |
-| `marketsharp_opportunities_list` | `POST …/jobs/opportunities` (jobs + leads since a date, contract totals) |
+| `marketsharp_opportunities_list` | `POST …/jobs/opportunities` (jobs + leads since a date, contract totals; needs View Opportunity) |
 | `marketsharp_notes_list` | `GET …/notes/contact/{contactId}` or by note type (needs employee) |
 | `marketsharp_activity_types_list` | `GET …/activities/types` |
 | `marketsharp_employees_list` | `GET …/employees` (paged) |
 | `marketsharp_lead_sources_list` | `GET …/primaryleadsources[/…/secondaryleadsources]` |
-| `marketsharp_product_interests_list` | `GET …/products/interests/{activeOnly}` or per inquiry |
+| `marketsharp_product_interests_list` | `GET …/products/interests/{activeOnly}` or per inquiry (needs View Product Interest) |
 | `marketsharp_divisions_list` | `GET …/divisions` |
 
 There are no create, update or delete tools. Searches and filtered lists use
 POST because that is how MarketSharp exposes them; they don't change data.
-The client only sends GET, or POST to those eight search and filter routes.
-Any other request is refused before sign-in.
+The client only sends the GET and POST routes these tools use (an allowlist of
+route templates in `src/client.ts`). Any other request, including a GET no
+tool uses, is refused before sign-in.
 
 ## Running
 
@@ -96,19 +97,23 @@ when unset) limits the Host headers `/mcp` accepts. Every response sets
   `MARKETSHARP_TOOL_TIERS` variable: with one tier there is nothing to choose,
   and nothing in the environment can change the tier set.
 - Every request goes to the fixed host `https://restapi.marketsharpm.com` at
-  exactly the path that was built. Ids in paths are percent-encoded, and `.`,
-  `..`, `/`, `\`, encoded separators and control characters are rejected
-  before any request. Redirects are refused (`redirect: 'manual'`, any 3xx is
+  exactly the path that was built. Ids in paths must look like MarketSharp ids
+  (1-64 letters, digits or dashes, which covers numbers and GUIDs); anything
+  else is rejected before any request. Redirects are refused (`redirect: 'manual'`, any 3xx is
   an error), so the bearer token never leaves the host. Response bodies are
   read with a 4 MiB cap.
 - Tool output, tool errors and log lines are redacted: the API key and secret
   in use (env or per request), bearer tokens and JWTs become `[REDACTED]`.
+  In MarketSharp responses, values under credential-named keys (`apiKey`,
+  `authorization`, `token`, `accessToken`, `refreshToken`, and any key ending
+  in `password` or `secret`) are redacted too.
   Arguments a tool doesn't declare are dropped before it runs. Vendor errors
   keep the HTTP status, MarketSharp's message and, when sent, the request id
   (`x-request-id`, `request-id` or `x-correlation-id`).
-- Page sizes and record counts above the server's cap are capped, not
-  rejected. Pages are passed through as given; the server never fetches more
-  than one page per call.
+- Page sizes and record counts above a tool's maximum are rejected, not
+  silently lowered, so "fewer rows than `rowsPerPage` means the last page"
+  stays true. Pages are passed through as given; the server never fetches
+  more than one page per call.
 - `MCP_ALLOW_INSECURE_DEV=1` lets HTTP start without a secret, on 127.0.0.1
   only, and requires `NODE_ENV=development`. With any other `NODE_ENV` the
   server refuses to start.
@@ -132,8 +137,15 @@ See `.env.example`. The image's health check probes `/health` only when
 - HTTP request bodies are capped at 256 KiB (262,144 bytes). Larger bodies,
   declared or chunked, get a 413.
 - Responses are capped at 200,000 characters; narrow with filters or paging.
-  An oversized list keeps whole records and its paging fields, and a note
-  says how many records were left out and what page size fits.
+  An oversized list keeps whole records and its paging fields (also when the
+  page sits under `response` or `data`), and a note says how many records
+  were left out. On the paged lists the note names the exact `pageNumber` and
+  `rowsPerPage` (`page` and `pageSize` for employees) that read on from the
+  first record left out; other tools can't page, so it says to narrow with
+  filters. A list whose first record alone is over the cap is cut as text.
+- The QuickFind searches always send `numberOfRecords` (default 25): it is a
+  non-nullable int32 in the spec, and what MarketSharp does with 0 is
+  undocumented.
 - Not covered: calendar, texting, email, PaySimple, QuickBooks, CompanyCam,
   automation rules, analytics, estimates (v1 only), and all admin/config writes.
 

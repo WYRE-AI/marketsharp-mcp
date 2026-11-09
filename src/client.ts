@@ -33,7 +33,6 @@ const TOKEN_SKEW_S = 60;
 export const MAX_UPSTREAM_BYTES = 4 * 1024 * 1024;
 /** Error and /token bodies are small; read at most this much of them. */
 const MAX_SMALL_BODY_BYTES = 64 * 1024;
-const MAX_SEGMENT = 256;
 /** Longest piece of MarketSharp's own error text quoted in an error message. */
 const MAX_VENDOR_DETAIL = 300;
 /** Values removed by exact match from anything MarketSharp sends back: the key, the secret and the access token in use. */
@@ -340,48 +339,96 @@ export async function getToken(c: MarketSharpCredentials, forceRefresh = false):
   return p;
 }
 
+/** The page a paged list tool asked for, and the names of its paging arguments. */
+export interface Paging {
+  pageArg: string;
+  page: number;
+  sizeArg: string;
+  size: number;
+}
+
 export interface MarketSharpRequest {
-  /** POST only for READ_ONLY_POST_ROUTES; anything else is refused before sign-in. */
+  /** Only the READ_ROUTES for that method are sent; anything else is refused before sign-in. */
   method: 'GET' | 'POST';
   /** Path relative to the host, every dynamic segment already passed through encodeSegment(). */
   path: string;
   query?: Record<string, string | number | boolean | undefined>;
   body?: unknown;
+  /** Set by paged list tools, so a response cut to fit can name the exact request that reads on. */
+  paging?: Paging;
 }
 
+const route = (template: string) => new RegExp(`^${template.replaceAll('{id}', '[^/]+')}$`);
+
 /**
- * MarketSharp serves its searches and filtered lists only as POST, with the
- * query in the body. These are the only POST routes this server calls; any
- * other POST, and any PUT, PATCH or DELETE, is refused before a token is
- * minted, so no tool (or future bug) can write to MarketSharp.
+ * The only routes this server calls ({id} is one path segment). MarketSharp
+ * serves its searches and filtered lists as POST, and not every GET is a pure
+ * read (one "opens the existing work order for editing"), so both methods are
+ * allowlisted. Anything else is refused before a token is minted, so no tool
+ * (or future bug) can write to MarketSharp.
  */
-const READ_ONLY_POST_ROUTES =
-  /^\/companies\/[^/]+\/(?:search\/global|contacts\/(?:search|filter)|inquiries\/(?:search|filter)|appointments\/filter|jobs\/(?:search|opportunities))$/;
+const READ_ROUTES: Record<MarketSharpRequest['method'], RegExp[]> = {
+  GET: [
+    '/companies',
+    '/companies/{id}',
+    '/companies/{id}/contacts/{id}',
+    '/companies/{id}/contacts/{id}/inquiries',
+    '/companies/{id}/inquiries/{id}', // also /inquiries/statuses
+    '/companies/{id}/opportunities/{id}/notes/Inquiry',
+    '/companies/{id}/opportunities/{id}/notes/Job',
+    '/companies/{id}/appointments/{id}',
+    '/companies/{id}/appointments/contacts/{id}',
+    '/companies/{id}/appointments/results/active',
+    '/companies/{id}/appointments/resultreasons/active',
+    '/companies/{id}/jobs/{id}',
+    '/companies/{id}/notes/contact/{id}',
+    '/companies/{id}/notes/notetype/{id}/contact/{id}',
+    '/companies/{id}/activities/types',
+    '/companies/{id}/employees',
+    '/companies/{id}/primaryleadsources',
+    '/companies/{id}/primaryleadsources/active',
+    '/companies/{id}/primaryleadsources/{id}/secondaryleadsources',
+    '/companies/{id}/primaryleadsources/{id}/secondaryleadsources/active',
+    '/companies/{id}/products/interests/true',
+    '/companies/{id}/products/interests/false',
+    '/companies/{id}/products/interests/leads/{id}',
+    '/companies/{id}/divisions',
+  ].map(route),
+  POST: [
+    '/companies/{id}/search/global',
+    '/companies/{id}/contacts/search',
+    '/companies/{id}/contacts/filter',
+    '/companies/{id}/inquiries/search',
+    '/companies/{id}/inquiries/filter',
+    '/companies/{id}/appointments/filter',
+    '/companies/{id}/jobs/search',
+    '/companies/{id}/jobs/opportunities',
+  ].map(route),
+};
+
+export function isReadOnlyRequest(req: Pick<MarketSharpRequest, 'method' | 'path'>): boolean {
+  return READ_ROUTES[req.method]?.some((r) => r.test(req.path)) ?? false;
+}
 
 function assertReadOnly(req: MarketSharpRequest): void {
-  if (req.method === 'GET' || (req.method === 'POST' && READ_ONLY_POST_ROUTES.test(req.path))) return;
+  if (isReadOnlyRequest(req)) return;
   throw new MarketSharpApiError('This server is read-only: that MarketSharp request is not a read, so it was not sent.');
 }
 
+/** MarketSharp ids are numbers or GUIDs: the same shape http.ts requires of the company and employee ids. */
+const ID_RE = /^[A-Za-z0-9-]{1,64}$/;
+
 /**
- * Returns one URL path segment, percent-encoded. Rejects anything that could
- * change which endpoint is hit: empty, `.`, `..`, `/` or `\`, percent-encoded
- * separators or dots, and control characters. buildUrl() also checks the
- * final URL against the expected path.
+ * Returns one URL path segment. Only letters, digits and dashes are accepted,
+ * so nothing (dots, separators, encoded or look-alike characters, `?`, `#`)
+ * can change which endpoint is hit. buildUrl() also checks the final URL
+ * against the expected path.
  */
 export function encodeSegment(value: unknown, name: string): string {
   const s = String(value ?? '').trim();
   if (!s) throw new MarketSharpApiError(`${name} is required.`);
-  if (
-    s.length > MAX_SEGMENT ||
-    s === '.' ||
-    s === '..' ||
-    /[/\\]/.test(s) ||
-    /%(2f|5c|2e)/i.test(s) ||
-    // eslint-disable-next-line no-control-regex
-    /[\u0000-\u001f\u007f]/.test(s)
-  ) {
-    throw new MarketSharpApiError(`${name} is not a valid id: use a single MarketSharp id (1-${MAX_SEGMENT} characters) without ".", "..", "/" or "\\".`);
+  if (!ID_RE.test(s)) {
+    throw new MarketSharpApiError(`${name} is not a valid id: use a single MarketSharp id (1-64 letters, digits or dashes).`);
   }
   return encodeURIComponent(s);
 }
@@ -402,39 +449,72 @@ export function buildUrl(path: string, query: MarketSharpRequest['query'] = {}):
 /** Where a list response keeps its records: the body itself, or one of these fields (SimplePagingModel uses `rows`). */
 const LIST_FIELDS = ['rows', 'response', 'data', 'items'] as const;
 
-/** The records of a list response, and how to rebuild the response with only the first n of them. */
-function listOf(value: unknown): { records: unknown[]; keep: (n: number) => unknown } | undefined {
+/** Envelope fields a page object may sit under, e.g. {meta, response: {pageNumber, rows}}. */
+const ENVELOPE_FIELDS = ['response', 'data'] as const;
+
+interface List {
+  records: unknown[];
+  /** The whole response rebuilt with only the first n records. */
+  keep: (n: number) => unknown;
+}
+
+/** The records of a list response: the body itself, a list field, or a list field one envelope level down. */
+function listOf(value: unknown, nested = true): List | undefined {
   if (Array.isArray(value)) return { records: value, keep: (n) => value.slice(0, n) };
   if (!value || typeof value !== 'object') return undefined;
   const page = value as Record<string, unknown>;
   const field = LIST_FIELDS.find((f) => Array.isArray(page[f]));
-  if (!field) return undefined;
-  const records = page[field] as unknown[];
-  return { records, keep: (n) => ({ ...page, [field]: records.slice(0, n) }) };
+  if (field) {
+    const records = page[field] as unknown[];
+    return { records, keep: (n) => ({ ...page, [field]: records.slice(0, n) }) };
+  }
+  if (!nested) return undefined;
+  for (const outer of ENVELOPE_FIELDS) {
+    const inner = listOf(page[outer], false);
+    if (inner) return { records: inner.records, keep: (n) => ({ ...page, [outer]: inner.keep(n) }) };
+  }
+  return undefined;
+}
+
+/**
+ * What to tell the model after keeping the first `kept` of `total` records.
+ * A paged tool gets the exact request that reads on from the first record
+ * left out: the largest page size up to `kept` whose pages line up with that
+ * record. Any other tool can't reach the rest, so it is told to narrow.
+ */
+function truncationNote(kept: number, total: number, paging?: Paging): string {
+  const head = `\n…[truncated: only the first ${kept} of ${total} records`;
+  if (!paging) {
+    return `${head} fit; the other ${total - kept} were left out and this tool can't page past them. Narrow the request with this tool's filters to see them.]`;
+  }
+  const next = (paging.page - 1) * paging.size + kept; // 0-based offset of the first record left out
+  let size = kept;
+  while (next % size !== 0) size--;
+  return (
+    `${head} in this page fit; the other ${total - kept} were left out. To read on without a gap, ` +
+    `call again with ${paging.pageArg}=${next / size + 1} and ${paging.sizeArg}=${size}, and keep ${paging.sizeArg}=${size} for the pages after that.]`
+  );
 }
 
 /**
  * Fits an oversized list response under the cap by dropping whole records
  * from the end. Every other field (pageNumber, totalPageCount, meta) is kept,
  * and the note says how many records were left out, so the model never
- * mistakes a cut page for the last one. Undefined when even no records don't fit.
+ * mistakes a cut page for the last one. Undefined when not even one record
+ * fits, so the caller's text cut still shows part of it.
  */
-function shrinkList(value: unknown, render: (v: unknown) => string): string | undefined {
+function shrinkList(value: unknown, render: (v: unknown) => string, paging?: Paging): string | undefined {
   const list = listOf(value);
-  if (!list || render(list.keep(0)).length > MAX_RESPONSE_CHARS) return undefined;
+  if (!list || list.records.length === 0 || render(list.keep(1)).length > MAX_RESPONSE_CHARS) return undefined;
   // Output length only grows with n, so binary-search the largest n that fits.
-  let lo = 0;
+  let lo = 1;
   let hi = list.records.length - 1;
   while (lo < hi) {
     const mid = Math.ceil((lo + hi) / 2);
     if (render(list.keep(mid)).length <= MAX_RESPONSE_CHARS) lo = mid;
     else hi = mid - 1;
   }
-  return (
-    render(list.keep(lo)) +
-    `\n…[truncated: only the first ${lo} of ${list.records.length} records in this response fit; the rest were left out. ` +
-    `Repeat the request asking for at most ${Math.max(lo, 1)} records (rowsPerPage, pageSize or numberOfRecords) and page on, or narrow it with filters.]`
-  );
+  return render(list.keep(lo)) + truncationNote(lo, list.records.length, paging);
 }
 
 /**
@@ -444,7 +524,7 @@ function shrinkList(value: unknown, render: (v: unknown) => string): string | un
  * oversized list keeps whole records and its paging fields; anything else is
  * cut as text.
  */
-export function renderBody(text: string, secrets: Secrets = []): string {
+export function renderBody(text: string, secrets: Secrets = [], paging?: Paging): string {
   if (!text) return 'OK (no content)';
   const render = (v: unknown) => redactText(JSON.stringify(v, null, 2), secrets);
   let value: unknown;
@@ -458,7 +538,7 @@ export function renderBody(text: string, secrets: Secrets = []): string {
   }
   if (out.length <= MAX_RESPONSE_CHARS) return out;
   return (
-    shrinkList(value, render) ??
+    shrinkList(value, render, paging) ??
     out.slice(0, MAX_RESPONSE_CHARS) +
       `\n…[truncated ${out.length - MAX_RESPONSE_CHARS} characters. Narrow the request: use filters, a smaller page size, or fewer records.]`
   );
@@ -521,7 +601,7 @@ export async function marketsharpRequest(creds: MarketSharpCredentials | null, r
       continue;
     }
     if (!res.ok) throw await vendorError(res, secrets);
-    return renderBody(await readBoundedText(res, MAX_UPSTREAM_BYTES), secrets);
+    return renderBody(await readBoundedText(res, MAX_UPSTREAM_BYTES), secrets, req.paging);
   }
 }
 

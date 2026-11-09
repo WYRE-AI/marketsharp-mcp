@@ -214,7 +214,9 @@ describe('client', () => {
   });
 
   it('refuses traversal in paths and missing credentials', async () => {
-    await expect(marketsharpRequest(creds, { method: 'GET', path: '/companies/../x' })).rejects.toThrow('Invalid MarketSharp path');
+    // '/companies/..' matches the /companies/{id} route, so this reaches buildUrl's own check.
+    await expect(marketsharpRequest(creds, { method: 'GET', path: '/companies/..' })).rejects.toThrow('Invalid MarketSharp path');
+    await expect(marketsharpRequest(creds, { method: 'GET', path: '/companies/../x' })).rejects.toThrow('read-only');
     await expect(marketsharpRequest(null, { method: 'GET', path: '/companies' })).rejects.toThrow('not configured');
     expect(fetchMock).not.toHaveBeenCalled();
   });

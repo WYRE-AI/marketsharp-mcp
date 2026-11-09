@@ -20,8 +20,10 @@ their notes are also on [GitHub Releases](https://github.com/WYRE-AI/marketsharp
 - Redaction of the API key and secret in use, bearer tokens and JWTs in tool
   output, tool errors and every log line. MarketSharp responses and error text
   are also redacted of the current access token and of values under
-  credential-named JSON keys (`apiKey`, `secret`, `password`,
-  `authorization`, ...). Redaction runs before any escaping or truncation, so
+  credential-named JSON keys (`apiKey`, `authorization`, `token`,
+  `accessToken`, `refreshToken`, and any key ending in `password` or `secret`,
+  such as `smtpPassword` or `webhook_secret`). Redaction runs before any
+  escaping or truncation, so
   a secret containing `&`, `<` or `>`, or one cut at a size cap, can't survive
   in part.
 - Vendor request id (`x-request-id`, `request-id` or `x-correlation-id`) in
@@ -46,10 +48,16 @@ their notes are also on [GitHub Releases](https://github.com/WYRE-AI/marketsharp
 - Redirects are refused with `redirect: 'manual'` and an explicit error for any
   3xx, on `/token` and on every API call.
 - Every request URL is checked to be on `https://restapi.marketsharpm.com` at
-  exactly the built path. Path ids reject `/`, `\`, encoded separators or dots
-  and control characters, as well as `.` and `..`.
+  exactly the built path. Path ids must be MarketSharp ids: 1-64 letters,
+  digits or dashes (numbers and GUIDs), the same shape the HTTP server
+  requires of the company and employee ids. Look-alike dots (`．．`), `∕`,
+  `?` and `#` are rejected along with separators and `..`.
 - Response bodies are read with a 4 MiB streaming cap.
-- Page sizes and record counts above the cap are capped instead of rejected.
+- Page sizes and record counts above a tool's maximum (`rowsPerPage` 1000,
+  `opportunities_list` `numberOfRecords` 1000, `pageSize` 500, search
+  `numberOfRecords` 500 or 200) are rejected before any request instead of
+  being silently lowered. A lowered `rowsPerPage` made a full page look
+  shorter than asked for, so the model read it as the last page and stopped.
   `inquiryIds` is limited to the documented 100.
 - Arguments a tool doesn't declare are dropped before the tool runs.
 - An error inside the HTTP `/mcp` handler returns a JSON-RPC 500 and logs
@@ -78,9 +86,11 @@ their notes are also on [GitHub Releases](https://github.com/WYRE-AI/marketsharp
 - MarketSharp calls stop when the gateway client disconnects: the fetch and
   any 429 backoff are aborted instead of running on with the tenant's token
   for up to about a minute. The shared `/token` mint keeps only its timeout.
-- The client refuses any MarketSharp request that isn't a GET or a POST to one
-  of the eight read-only search and filter routes, before minting a token, so
-  no tool or later change can write to MarketSharp.
+- The client refuses any MarketSharp request that isn't one of the GET or POST
+  routes the tools use (an allowlist of route templates), before minting a
+  token, so no tool or later change can write to MarketSharp. GETs are
+  allowlisted too because not every MarketSharp GET is a pure read (one
+  "opens the existing work order for editing").
 - Log lines redact the access tokens used in the current HTTP request by exact
   match, so an opaque (non-JWT) token is caught too.
 - A full token cache (500 credential sets) drops expired tokens and then the
@@ -89,14 +99,31 @@ their notes are also on [GitHub Releases](https://github.com/WYRE-AI/marketsharp
 ### Fixed
 
 - An oversized list response is cut at a record boundary instead of mid-text:
-  paging fields (`pageNumber`, `totalPageCount`, `meta`) are kept and a note
-  gives how many records were left out and the page size that fits, so a cut
-  page is never read as the last one.
+  paging fields (`pageNumber`, `totalPageCount`, `meta`) are kept, also when
+  the page sits one level down under `response` or `data`, and a note gives
+  how many records were left out, so a cut page is never read as the last
+  one. On the paged lists the note names the exact page number and page size
+  that read on from the first record left out, on any page (asking page N+1
+  at a smaller size used to skip or repeat records after page 1). Tools
+  without paging are told to narrow with filters instead of being sent after
+  a page-size argument they don't have. A list whose first record alone is
+  over the cap falls back to the text cut, so part of it is still shown.
+- The QuickFind searches (`marketsharp_contacts_search`,
+  `marketsharp_inquiries_search`, `marketsharp_jobs_search`) always send
+  `numberOfRecords`, 25 unless given. It is a non-nullable int32 in the spec,
+  so leaving it out sent 0, whose meaning is undocumented.
 - Tool descriptions no longer state MarketSharp defaults the spec doesn't
   document (`numberOfRecords` on the searches, `rowsPerPage` on the contact
-  and appointment filters). `marketsharp_opportunities_list` says it can't
-  page past `numberOfRecords`, and `marketsharp_inquiry_notes_list` says it
-  needs an Employee ID with the View Opportunity Note permission.
+  and appointment filters). The inquiries filter does document one
+  (`pageNumber` 1, `rowsPerPage` 1000); the tool always sends its own 100.
+  `marketsharp_opportunities_list` says it can't page past `numberOfRecords`
+  and that a full result may be incomplete (it no longer suggests moving
+  `fromDate`, which skips records when the sort order is unknown).
+- Tool descriptions name the permissions the spec requires: View Opportunity
+  Note on `marketsharp_inquiry_notes_list` (which no longer claims an
+  Employee ID is required), View Opportunity on
+  `marketsharp_opportunities_list` and View Product Interest on
+  `marketsharp_product_interests_list`.
 - An ASP.NET model-binding 400 now names the first `ModelState` field error
   (redacted and truncated like other vendor text) instead of only "The
   request is invalid.".
