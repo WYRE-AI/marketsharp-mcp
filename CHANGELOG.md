@@ -59,3 +59,15 @@ their notes are also on [GitHub Releases](https://github.com/WYRE-AI/marketsharp
   `src/` and the build config.
 - Release runs on push to `main` again, through the reusable pipeline at
   `508ef4dd` with `fail-on-severity: HIGH,CRITICAL`.
+
+### Security
+
+- `/mcp` accepts only POST. Any other method gets 405 with `Allow: POST`
+  after the S2S check, so a signed GET can no longer open the SDK's standalone
+  SSE stream and hold a tenant's credential context open.
+- Optional `MCP_ALLOWED_HOSTS` Host-header allowlist on `/mcp` (403 when the
+  Host isn't listed). Every response sets `Cache-Control: no-store`.
+- HTTP with `AUTH_MODE=env` refuses to start when `MARKETSHARP_COMPANY_ID`,
+  `MARKETSHARP_API_KEY` or `MARKETSHARP_API_SECRET` is empty, or when the
+  company or employee id is not a MarketSharp id, instead of reporting healthy
+  and failing every tool call.

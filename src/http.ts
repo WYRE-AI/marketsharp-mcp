@@ -1,4 +1,9 @@
-import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
+import {
+  createServer as createHttpServer,
+  type IncomingMessage,
+  type Server as HttpServer,
+  type ServerResponse,
+} from 'node:http';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { createServer } from './server.js';
 import { runWithCredentials, setGatewayMode } from './client.js';
@@ -82,6 +87,29 @@ function tierHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value.join(',') : value;
 }
 
+function sendJson(res: ServerResponse, status: number, body: unknown): void {
+  res.writeHead(status, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(body));
+}
+
+/** MCP_ALLOWED_HOSTS: comma-separated Host values /mcp accepts. Unset or empty turns the check off. */
+function parseAllowedHosts(raw: string | undefined): ReadonlySet<string> | null {
+  const entries = (raw ?? '')
+    .split(',')
+    .map((h) => h.trim().toLowerCase())
+    .filter(Boolean);
+  return entries.length ? new Set(entries) : null;
+}
+
+/** Matches the Host header as sent, or without its port. */
+function hostAllowed(req: IncomingMessage, allowed: ReadonlySet<string> | null): boolean {
+  if (!allowed) return true;
+  const host = (req.headers.host ?? '').trim().toLowerCase();
+  if (!host) return false;
+  if (allowed.has(host)) return true;
+  return allowed.has(host.replace(/^\[([^\]]+)\](:\d+)?$/, '$1').replace(/:\d+$/, ''));
+}
+
 function isLoopbackHost(host: string): boolean {
   const normalized = host.trim().toLowerCase().replace(/^\[(.+)\]$/, '$1');
   return normalized === '127.0.0.1' || normalized === 'localhost' || normalized === '::1';
@@ -113,6 +141,23 @@ function resolveAuthMode(): AuthMode {
   if (raw === '' || raw === 'gateway') return 'gateway';
   if (raw === 'env') return 'env';
   return refuseStart(`AUTH_MODE must be 'gateway' or 'env'. Got ${JSON.stringify(raw.slice(0, 40))}.`);
+}
+
+/**
+ * AUTH_MODE=env serves every HTTP request with MARKETSHARP_*, so a missing
+ * credential or a malformed id refuses to start instead of reporting healthy
+ * and failing each tool call. Only names are logged, never values.
+ */
+function checkEnvCredentials(): void {
+  for (const name of ['MARKETSHARP_COMPANY_ID', 'MARKETSHARP_API_KEY', 'MARKETSHARP_API_SECRET']) {
+    if (!(process.env[name] ?? '').trim()) refuseStart(`Refusing to start HTTP transport: AUTH_MODE=env requires ${name}.`);
+  }
+  for (const name of ['MARKETSHARP_COMPANY_ID', 'MARKETSHARP_EMPLOYEE_ID']) {
+    const value = (process.env[name] ?? '').trim();
+    if (value && !ID_RE.test(value)) {
+      refuseStart(`Refusing to start HTTP transport: ${name} is not a MarketSharp id (letters, digits and dashes).`);
+    }
+  }
 }
 
 /**
@@ -163,20 +208,24 @@ function resolveListenHost(s2sSecret: string): string {
 export async function startHttpServer(): Promise<HttpServer> {
   checkInsecureDevEnv();
   const isGatewayMode = resolveAuthMode() === 'gateway';
+  if (!isGatewayMode) checkEnvCredentials();
   const s2sSecret = resolveS2sSecret();
   const port = parseInt(process.env.MCP_HTTP_PORT || '8080', 10);
   const host = resolveListenHost(s2sSecret);
+  const allowedHosts = parseAllowedHosts(process.env.MCP_ALLOWED_HOSTS);
   setGatewayMode(isGatewayMode);
 
   const httpServer = createHttpServer(async (req, res) => {
+    // Responses carry tenant data or auth outcomes; nothing in between may cache them.
+    res.setHeader('Cache-Control', 'no-store');
+
     // Only the path matters for routing. Parse against a fixed base so a
     // missing or malformed Host header can't throw out of the handler.
     let url: URL;
     try {
       url = new URL(req.url || '/', 'http://localhost');
     } catch {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Bad request' }));
+      sendJson(res, 400, { error: 'Bad request' });
       return;
     }
 
@@ -184,37 +233,44 @@ export async function startHttpServer(): Promise<HttpServer> {
       // /health is container LIVENESS, not credential-readiness. It stays
       // unauthenticated, does not call getCredentials(), and never returns
       // a credential. `configured` is only whether the env credentials are set.
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(
-        JSON.stringify({
-          status: 'ok',
-          transport: 'http',
-          mode: isGatewayMode ? 'gateway' : 'standalone',
-          credentials: {
-            configured:
-              !isGatewayMode &&
-              Boolean(
-                process.env.MARKETSHARP_COMPANY_ID && process.env.MARKETSHARP_API_KEY && process.env.MARKETSHARP_API_SECRET
-              ),
-          },
-          timestamp: new Date().toISOString(),
-        })
-      );
+      sendJson(res, 200, {
+        status: 'ok',
+        transport: 'http',
+        mode: isGatewayMode ? 'gateway' : 'standalone',
+        credentials: {
+          configured:
+            !isGatewayMode &&
+            Boolean(process.env.MARKETSHARP_COMPANY_ID && process.env.MARKETSHARP_API_KEY && process.env.MARKETSHARP_API_SECRET),
+        },
+        timestamp: new Date().toISOString(),
+      });
       return;
     }
 
     if (url.pathname !== '/mcp') {
-      res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Not found', endpoints: ['/mcp', '/health'] }));
+      sendJson(res, 404, { error: 'Not found', endpoints: ['/mcp', '/health'] });
       return;
     }
 
-    // S2S guard runs first: a forged request must never reach credential
-    // extraction or the MCP server/transport. Empty s2sSecret is only
-    // reachable when MCP_ALLOW_INSECURE_DEV=1.
+    if (!hostAllowed(req, allowedHosts)) {
+      sendJson(res, 403, { error: 'Forbidden: Host header is not in MCP_ALLOWED_HOSTS.' });
+      return;
+    }
+
+    // S2S guard runs before anything else touches the request: a forged
+    // request must never reach credential extraction or the MCP
+    // server/transport. Empty s2sSecret is only reachable when MCP_ALLOW_INSECURE_DEV=1.
     if (s2sSecret && !verifyS2sHeader(headerValue(req.headers[S2S_HEADER]), s2sSecret)) {
-      res.writeHead(401, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(S2S_UNAUTHORIZED));
+      sendJson(res, 401, S2S_UNAUTHORIZED);
+      return;
+    }
+
+    // Stateless JSON only. A GET would open the SDK's standalone SSE stream,
+    // which stays open holding a tenant's credential context; DELETE has no
+    // session to end. Checked after S2S so unsigned callers still get 401.
+    if (req.method !== 'POST') {
+      res.setHeader('Allow', 'POST');
+      sendJson(res, 405, { jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed: this server is stateless; use POST.' }, id: null });
       return;
     }
 
@@ -222,14 +278,11 @@ export async function startHttpServer(): Promise<HttpServer> {
     // Chunked bodies have no Content-Length; the transport's maxRequestBodySize covers them.
     const contentLength = Number(headerValue(req.headers['content-length']));
     if (Number.isFinite(contentLength) && contentLength > MAX_REQUEST_BODY_BYTES) {
-      res.writeHead(413, { 'Content-Type': 'application/json' });
-      res.end(
-        JSON.stringify({
-          jsonrpc: '2.0',
-          error: { code: -32600, message: `Request body exceeds ${MAX_REQUEST_BODY_BYTES} bytes` },
-          id: null,
-        }),
-      );
+      sendJson(res, 413, {
+        jsonrpc: '2.0',
+        error: { code: -32600, message: `Request body exceeds ${MAX_REQUEST_BODY_BYTES} bytes` },
+        id: null,
+      });
       return;
     }
 
@@ -262,10 +315,7 @@ export async function startHttpServer(): Promise<HttpServer> {
         await transport.handleRequest(req, res);
       } catch (err) {
         logger.error('MCP request failed', { error: (err as Error)?.name ?? typeof err });
-        if (!res.headersSent) {
-          res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32603, message: 'Internal error' }, id: null }));
-        }
+        if (!res.headersSent) sendJson(res, 500, { jsonrpc: '2.0', error: { code: -32603, message: 'Internal error' }, id: null });
       }
     };
 
@@ -280,13 +330,11 @@ export async function startHttpServer(): Promise<HttpServer> {
       const apiSecret = headerValue(req.headers['x-marketsharp-api-secret']);
       const employeeId = headerValue(req.headers['x-marketsharp-employee-id'])?.trim() || undefined;
       if (!companyId || !apiKey || !apiSecret) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(GATEWAY_CREDENTIALS_UNAUTHORIZED));
+        sendJson(res, 401, GATEWAY_CREDENTIALS_UNAUTHORIZED);
         return;
       }
       if (!ID_RE.test(companyId) || (employeeId !== undefined && !ID_RE.test(employeeId))) {
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify(INVALID_ID_HEADER));
+        sendJson(res, 400, INVALID_ID_HEADER);
         return;
       }
       await runWithCredentials({ companyId, apiKey, apiSecret, employeeId }, handle);

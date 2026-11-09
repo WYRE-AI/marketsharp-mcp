@@ -74,12 +74,17 @@ with "credentials are not configured".
 HTTP (`MCP_TRANSPORT=http`, `/mcp` + `/health`) refuses to start without a real
 `CONDUIT_S2S_SECRET` (at least 32 characters, not a known or placeholder-looking
 value, not a repeated pattern, at least 8 distinct characters) and requires a
-valid `X-Gateway-S2S` header on every `/mcp` request.
+valid `X-Gateway-S2S` header on every `/mcp` request. `/mcp` takes POST only
+(405 with `Allow: POST` otherwise). `MCP_ALLOWED_HOSTS` (comma-separated, off
+when unset) limits the Host headers `/mcp` accepts. Every response sets
+`Cache-Control: no-store`.
 
 - `AUTH_MODE` is `gateway` (the default when unset) or `env`. Any other value
   refuses to start. In `gateway` mode credentials come only from the
   `x-marketsharp-*` headers; `MARKETSHARP_*` env is never read. `env` is for a
-  single tenant and reads `MARKETSHARP_*` from the environment. Stdio uses the
+  single tenant and reads `MARKETSHARP_*` from the environment; over HTTP it
+  refuses to start unless the company id, API key and API secret are set and
+  the ids look like MarketSharp ids. Stdio uses the
   environment only when `AUTH_MODE` is unset or exactly `env`; any other value
   (including a typo) is treated as `gateway`, so env credentials are never used
   by mistake.
