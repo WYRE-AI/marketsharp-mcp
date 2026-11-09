@@ -45,14 +45,14 @@
         },
         {
           "name": "MCP_TRANSPORT",
-          "description": "Transport mode for the server. Set to 'stdio' for local CLI use; the image defaults to 'http' for gateway hosting.",
+          "description": "Transport mode. The image defaults to 'http' for gateway hosting. To run the image over stdio with the MARKETSHARP_* variables above, set MCP_TRANSPORT=stdio and AUTH_MODE=env.",
           "isRequired": false,
-          "default": "stdio",
+          "default": "http",
           "format": "string"
         },
         {
           "name": "AUTH_MODE",
-          "description": "HTTP credential source: 'gateway' (default) expects x-marketsharp-* headers from the WYRE AI gateway and never reads MARKETSHARP_* env; 'env' is single-tenant and reads MARKETSHARP_* env. Any other value refuses to start. Stdio always uses env.",
+          "description": "Credential source. The image sets 'gateway': credentials come only from x-marketsharp-* headers sent by the WYRE AI gateway and MARKETSHARP_* env is never read, over HTTP or stdio. Set 'env' to use the MARKETSHARP_* variables; stdio needs it. Over HTTP any other value refuses to start.",
           "isRequired": false,
           "default": "gateway",
           "format": "string"

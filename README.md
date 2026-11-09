@@ -66,6 +66,11 @@ npm ci && npm run build
 MARKETSHARP_COMPANY_ID=… MARKETSHARP_API_KEY=… MARKETSHARP_API_SECRET=… node dist/index.js   # stdio
 ```
 
+The Docker image defaults to `MCP_TRANSPORT=http` and `AUTH_MODE=gateway`.
+To run the image over stdio with `MARKETSHARP_*` credentials, pass
+`-e MCP_TRANSPORT=stdio -e AUTH_MODE=env` as well; otherwise it fails closed
+with "credentials are not configured".
+
 HTTP (`MCP_TRANSPORT=http`, `/mcp` + `/health`) refuses to start without a real
 `CONDUIT_S2S_SECRET` (at least 32 characters, not a known or placeholder-looking
 value, not a repeated pattern, at least 8 distinct characters) and requires a
