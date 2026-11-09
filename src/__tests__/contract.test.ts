@@ -17,7 +17,7 @@ import {
   runWithCredentials,
   setGatewayMode,
 } from '../client.js';
-import { DEFAULT_TIERS, configuredTiers, narrowTiers } from '../config.js';
+import { ALL_TIERS, configuredTiers, narrowTiers } from '../config.js';
 import { REDACTED, redactText } from '../redact.js';
 import { dispatchToolCall, listTools, pickDeclaredArgs, TOOLS } from '../tools/index.js';
 import { logger } from '../utils/logger.js';
@@ -306,10 +306,10 @@ describe('gateway mode reads credentials only from headers', () => {
 });
 
 describe('tool tiers', () => {
-  it('default tier set is read only, and tools/list is 25 read-only tools', () => {
-    expect([...DEFAULT_TIERS]).toEqual(['read']);
-    expect([...configuredTiers({} as NodeJS.ProcessEnv)]).toEqual(['read']);
-    const tools = listTools({} as NodeJS.ProcessEnv);
+  it('read is the only tier, and tools/list is 25 read-only tools', () => {
+    expect([...ALL_TIERS]).toEqual(['read']);
+    expect([...configuredTiers()]).toEqual(['read']);
+    const tools = listTools();
     expect(tools).toHaveLength(25);
     for (const t of tools) {
       expect(TOOLS.find((d) => d.name === t.name)!.tier, t.name).toBe('read');
@@ -317,18 +317,25 @@ describe('tool tiers', () => {
     }
   });
 
-  it('MARKETSHARP_ENABLE_WRITES adds the write tier', () => {
-    expect([...configuredTiers({ MARKETSHARP_ENABLE_WRITES: 'true' } as NodeJS.ProcessEnv)]).toEqual(['read', 'write']);
+  it('MARKETSHARP_ENABLE_WRITES is not read and adds no tier', () => {
+    vi.stubEnv('MARKETSHARP_ENABLE_WRITES', 'true');
+    try {
+      expect([...configuredTiers()]).toEqual(['read']);
+      expect(listTools()).toHaveLength(25);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it('the tier header only narrows; present-but-empty means zero tools', () => {
-    const both = configuredTiers({ MARKETSHARP_ENABLE_WRITES: 'true' } as NodeJS.ProcessEnv);
-    expect([...narrowTiers(both, undefined)]).toEqual(['read', 'write']);
-    expect([...narrowTiers(both, 'read')]).toEqual(['read']);
-    expect([...narrowTiers(both, ' READ , admin')]).toEqual(['read']);
-    expect([...narrowTiers(both, '')]).toEqual([]);
-    expect([...narrowTiers(configuredTiers({} as NodeJS.ProcessEnv), 'read,write')]).toEqual(['read']);
-    expect(listTools({ MARKETSHARP_ENABLE_WRITES: 'true' } as NodeJS.ProcessEnv, narrowTiers(both, ''))).toEqual([]);
+    const all = configuredTiers();
+    expect([...narrowTiers(all, undefined)]).toEqual(['read']);
+    expect([...narrowTiers(all, 'read')]).toEqual(['read']);
+    expect([...narrowTiers(all, ' READ , admin')]).toEqual(['read']);
+    expect([...narrowTiers(all, 'read,write')]).toEqual(['read']);
+    expect([...narrowTiers(all, 'write')]).toEqual([]);
+    expect([...narrowTiers(all, '')]).toEqual([]);
+    expect(listTools(narrowTiers(all, ''))).toEqual([]);
   });
 
   it('a tool outside the narrowed tiers is an unknown tool and never calls MarketSharp', async () => {

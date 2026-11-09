@@ -11,13 +11,10 @@ their notes are also on [GitHub Releases](https://github.com/WYRE-AI/marketsharp
 
 ### Added
 
-- MCP server for the MarketSharp CRM REST API v2.0 (WYREAI-526): 25 read tools
-  and 4 create-only write tools that stay hidden unless
-  `MARKETSHARP_ENABLE_WRITES=true`. Stdio and stateless streamable HTTP
-  (Conduit gateway) transports.
-- `X-Conduit-Tool-Tiers` support. The header can only narrow the container's
-  tiers (`read`, plus `write` when writes are on). A present but empty header
-  exposes no tools.
+- MCP server for the MarketSharp CRM REST API v2.0 (WYREAI-526): 25 read-only
+  tools. Stdio and stateless streamable HTTP (Conduit gateway) transports.
+- `X-Conduit-Tool-Tiers` support. `read` is the only tier and the header can
+  only narrow it. A present but empty header exposes no tools.
 - Redaction of the API key and secret in use, bearer tokens and JWTs in tool
   output, tool errors and every log line.
 - Vendor request id (`x-request-id`, `request-id` or `x-correlation-id`) in

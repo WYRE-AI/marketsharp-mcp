@@ -2,7 +2,7 @@
 // Spawns the built stdio server (dist/index.js) and checks the tool surface
 // and input guards. Makes no network call: the only tool calls made here are
 // ones the server must refuse before signing in to MarketSharp (a traversal
-// id, a hidden write, an unknown tool). Upstream round-trips are covered by
+// id, and write or delete tool names that do not exist). Upstream round-trips are covered by
 // the mocked tests in src/__tests__.
 // Usage: npm run build && npm run smoke
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -69,13 +69,12 @@ try {
   if (!traversal.isError || !/contactId/.test(text)) fail(`traversal id was not refused: ${text.slice(0, 200)}`);
   if (text.includes(FAKE_SECRET)) fail('secret leaked into tool output');
 
-  const write = await client.callTool({ name: 'marketsharp_contact_notes_create', arguments: { contactId: 'c1', note: 'x' } });
-  if (!write.isError || !/turned off/.test(write.content?.[0]?.text ?? '')) fail('hidden write was not refused');
+  for (const name of ['marketsharp_contact_notes_create', 'marketsharp_contacts_delete']) {
+    const unknown = await client.callTool({ name, arguments: { contactId: 'c1', note: 'x' } });
+    if (!unknown.isError || unknown.content?.[0]?.text !== `Error: Unknown tool: ${name}`) fail(`${name} was not refused as unknown`);
+  }
 
-  const unknown = await client.callTool({ name: 'marketsharp_contacts_delete', arguments: {} });
-  if (!unknown.isError) fail('unknown tool did not error');
-
-  if (!process.exitCode) console.log(`smoke-stdio: OK (${tools.length} read-only tools; traversal id, hidden write and unknown tool refused without a network call)`);
+  if (!process.exitCode) console.log(`smoke-stdio: OK (${tools.length} read-only tools; traversal id and unknown write/delete tools refused without a network call)`);
 } catch (err) {
   fail(err instanceof Error ? err.message : String(err));
 } finally {

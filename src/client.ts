@@ -20,8 +20,7 @@ export const MARKETSHARP_BASE_URL = 'https://restapi.marketsharpm.com';
 export const MARKETSHARP_API_VERSION = '2.0';
 
 const TOKEN_TIMEOUT_MS = 15_000;
-const READ_TIMEOUT_MS = 30_000;
-const WRITE_TIMEOUT_MS = 30_000;
+const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_RETRIES = 3;
 const MAX_BACKOFF_MS = 10_000;
 /** Used when /token omits expires_in. Kept short because the TTL is undocumented. */
@@ -364,9 +363,9 @@ export function renderBody(text: string): string {
 /**
  * Call MarketSharp with a cached bearer token. A 401 triggers exactly one
  * token refresh and retry; 429 (any method) and 503 (GET only) back off
- * (Retry-After honored). A 503 on a POST (searches, filtered lists and the
- * create tools) is returned, not retried, since a create may already have
- * been saved. Redirects are refused so the bearer token never leaves restapi.marketsharpm.com.
+ * (Retry-After honored). A 503 on a POST (searches and filtered lists) is
+ * returned, not retried: POST is not assumed idempotent. Redirects are
+ * refused so the bearer token never leaves restapi.marketsharpm.com.
  */
 export async function marketsharpRequest(creds: MarketSharpCredentials | null, req: MarketSharpRequest): Promise<string> {
   if (!creds) {
@@ -376,7 +375,6 @@ export async function marketsharpRequest(creds: MarketSharpCredentials | null, r
   }
   const url = buildUrl(req.path, req.query).toString();
   const body = req.body === undefined ? undefined : JSON.stringify(req.body);
-  const timeout = req.method === 'GET' ? READ_TIMEOUT_MS : WRITE_TIMEOUT_MS;
   let refreshed = false;
 
   for (let attempt = 0; ; attempt++) {
@@ -385,7 +383,7 @@ export async function marketsharpRequest(creds: MarketSharpCredentials | null, r
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     let res: Response;
     try {
-      res = await fetch(url, { method: req.method, headers, body, redirect: 'manual', signal: AbortSignal.timeout(timeout) });
+      res = await fetch(url, { method: req.method, headers, body, redirect: 'manual', signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
     } catch (err) {
       logFetchFailure('MarketSharp request failed', req.method, err);
       const timedOut = (err as Error).name === 'TimeoutError';
@@ -402,8 +400,8 @@ export async function marketsharpRequest(creds: MarketSharpCredentials | null, r
       continue;
     }
     // 429 means MarketSharp rejected the request, so any method may retry.
-    // A 503 can come from a proxy after the backend already saved a POST, and
-    // the POST upserts here create new records, so only GETs retry on 503.
+    // A 503 can come from a proxy after the backend already handled a POST,
+    // and POST is not assumed idempotent, so only GETs retry on 503.
     const retryable = res.status === 429 || (res.status === 503 && req.method === 'GET');
     if (retryable && attempt < MAX_RETRIES) {
       await res.body?.cancel().catch(() => undefined);

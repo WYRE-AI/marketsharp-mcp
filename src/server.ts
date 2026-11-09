@@ -9,7 +9,7 @@ import { VERSION } from './version.js';
 export function createServer(tiers?: ReadonlySet<ToolTier>): Server {
   const server = new Server({ name: 'marketsharp-mcp', version: VERSION }, { capabilities: { tools: {}, logging: {} } });
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: listTools(process.env, tiers) }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: listTools(tiers) }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;

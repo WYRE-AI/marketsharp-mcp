@@ -1,9 +1,4 @@
-import {
-  encodeSegment,
-  marketsharpRequest,
-  MarketSharpApiError,
-  type MarketSharpRequest,
-} from '../client.js';
+import { encodeSegment, MarketSharpApiError, type MarketSharpRequest } from '../client.js';
 import type { ToolTier } from '../config.js';
 import type { MarketSharpCredentials } from '../types.js';
 import { compact, optBool, optEnum, optInt, optLimit, optString, optStringArray, reqString, type Args } from './args.js';
@@ -16,9 +11,7 @@ export interface ToolDef {
   tier: ToolTier;
   inputSchema: { type: 'object'; properties: Record<string, object>; required?: string[]; additionalProperties?: boolean };
   /** Build the single MarketSharp request for this call. */
-  build?: (args: Args, creds: MarketSharpCredentials) => MarketSharpRequest;
-  /** Custom runner for tools that need more than one request. */
-  run?: (args: Args, creds: MarketSharpCredentials) => Promise<string>;
+  build: (args: Args, creds: MarketSharpCredentials) => MarketSharpRequest;
 }
 
 const s = (description: string, extra: object = {}) => ({ type: 'string', description, ...extra });
@@ -66,23 +59,6 @@ const pagingProps = {
   rowsPerPage: i('Rows per page. Keep this small (MarketSharp defaults to 1000).', 1, 1000),
 };
 const DEFAULT_ROWS = 100;
-
-/** Unwrap MarketSharp's {meta, response} envelope and a single-element array. */
-/** Inquiry fields the appointment save rewrites (InquiryResourceModel names). */
-const PRESERVED_INQUIRY_FIELDS = ['notes', 'addressLineOne', 'addressLineTwo', 'city', 'state', 'zip', 'latitude', 'longitude'] as const;
-
-function unwrapRecord(text: string): Record<string, unknown> | undefined {
-  try {
-    let body = JSON.parse(text) as unknown;
-    if (body && typeof body === 'object' && !Array.isArray(body) && 'response' in (body as object)) {
-      body = (body as { response: unknown }).response;
-    }
-    if (Array.isArray(body)) body = body[0];
-    return body && typeof body === 'object' ? (body as Record<string, unknown>) : undefined;
-  } catch {
-    return undefined;
-  }
-}
 
 const TOOL_DEFS: ToolDef[] = [
   // ---------------------------------------------------------------- company
@@ -395,7 +371,7 @@ const TOOL_DEFS: ToolDef[] = [
   {
     name: 'marketsharp_activity_types_list',
     tier: 'read',
-    description: "List the company's activity types (e.g. Call, Email, Follow Up). Use the description as activityType when creating an activity.",
+    description: "List the company's activity types (e.g. Call, Email, Follow Up).",
     inputSchema: { type: 'object', properties: { includeInactive: b('Include activity types that are turned off.') } },
     build: (a, c) => ({
       method: 'GET',
@@ -476,168 +452,6 @@ const TOOL_DEFS: ToolDef[] = [
     description: "List the company's divisions.",
     inputSchema: { type: 'object', properties: {} },
     build: (_a, c) => ({ method: 'GET', path: `${company(c)}/divisions` }),
-  },
-  // ----------------------------------------------------------------- writes
-  {
-    name: 'marketsharp_contact_notes_create',
-    tier: 'write',
-    description:
-      'Add a new note to a contact. It never edits or removes an existing note. Needs an employee: pass employeeId or set an Employee ID on the connection, whose MarketSharp permissions it runs with.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        contactId: s('MarketSharp contact ID.'),
-        note: s('Note text.'),
-        employeeId: s("Employee the note is from. Defaults to the connection's Employee ID."),
-      },
-      required: ['contactId', 'note'],
-    },
-    build: (a, c) => {
-      const employeeId = optString(a, 'employeeId', 64) ?? c.employeeId;
-      if (!employeeId) {
-        throw new MarketSharpApiError('employeeId is required: this connection has no Employee ID, so name the employee the note is from.');
-      }
-      return {
-        method: 'POST',
-        path: `${company(c)}/notes/contactNote`,
-        // No `id`: MarketSharp's endpoint is an upsert, and omitting the id is what makes this create-only.
-        body: { contactId: reqString(a, 'contactId', 64), note: reqString(a, 'note', 8000), employeeId, isActive: true },
-      };
-    },
-  },
-  {
-    name: 'marketsharp_inquiry_notes_create',
-    tier: 'write',
-    description: 'Add a new note to an inquiry (lead), or to the job created from it. It never edits or removes an existing note.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        inquiryId: s('MarketSharp inquiry ID.'),
-        note: s('Note text.'),
-        noteType: s('Inquiry note (default) or Job note.', { enum: ['Inquiry', 'Job'] }),
-      },
-      required: ['inquiryId', 'note'],
-    },
-    build: (a, c) => ({
-      method: 'POST',
-      path: `${company(c)}/opportunities/notes`,
-      // No `id`: omitting it makes MarketSharp insert rather than update.
-      body: {
-        inquiryId: reqString(a, 'inquiryId', 64),
-        note: reqString(a, 'note', 8000),
-        opportunityNoteType: optEnum(a, 'noteType', ['Inquiry', 'Job'] as const) ?? 'Inquiry',
-      },
-    }),
-  },
-  {
-    name: 'marketsharp_activities_create',
-    tier: 'write',
-    description:
-      "Create a new activity (to-do, call or follow-up) on a contact, optionally tied to an inquiry, appointment or job. MarketSharp automation rules don't run for it, and it never edits an existing activity. If the connection has an Employee ID, it's recorded as the scheduler.",
-    inputSchema: {
-      type: 'object',
-      properties: {
-        contactId: s('MarketSharp contact ID.'),
-        activityType: s('Activity type, as listed by marketsharp_activity_types_list.'),
-        name: s('Short title.'),
-        note: s('Details.'),
-        assignedEmployeeId: s('Employee the activity is assigned to.'),
-        dueDate: s(`When it is due. ${DATE_HINT}`),
-        reminderMinutes: i('Remind the assignee this many minutes before it is due.', 0, 100000),
-        inquiryId: s('Inquiry to tie it to.'),
-        appointmentId: s('Appointment to tie it to.'),
-        jobId: s('Job to tie it to.'),
-      },
-      required: ['contactId', 'activityType', 'assignedEmployeeId'],
-    },
-    build: (a, c) => {
-      const reminder = optInt(a, 'reminderMinutes', 0, 100000);
-      return {
-        method: 'POST',
-        path: `${company(c)}/activities`,
-        // No activityId: omitting it makes MarketSharp insert rather than update.
-        body: compact({
-          contactId: reqString(a, 'contactId', 64),
-          activityType: reqString(a, 'activityType', 200),
-          name: optString(a, 'name', 200),
-          note: optString(a, 'note', 8000),
-          assignedEmployeeId: reqString(a, 'assignedEmployeeId', 64),
-          scheduledEmployeeId: c.employeeId,
-          dueDate: optString(a, 'dueDate', 40),
-          reminderMinutes: reminder === undefined ? undefined : String(reminder),
-          inquiryId: optString(a, 'inquiryId', 64),
-          appointmentId: optString(a, 'appointmentId', 64),
-          jobId: optString(a, 'jobId', 64),
-          isActive: true,
-        }),
-      };
-    },
-  },
-  {
-    name: 'marketsharp_appointments_create',
-    tier: 'write',
-    description:
-      "Book a new appointment on an existing inquiry (lead). The inquiry's address and notes are kept as they are. It doesn't change an existing appointment or record its result.",
-    inputSchema: {
-      type: 'object',
-      properties: {
-        inquiryId: s('MarketSharp inquiry ID to book the appointment on.'),
-        appointmentDateTime: s(`Appointment start. ${DATE_HINT}`),
-        salespersonId: s('Salesperson (employee ID) running the appointment.'),
-        secondSalespersonId: s('Optional second salesperson (employee ID).'),
-        appointmentType: s('Appointment type, if the company uses them.'),
-        notes: s('Appointment notes.'),
-      },
-      required: ['inquiryId', 'appointmentDateTime', 'salespersonId'],
-    },
-    // MarketSharp's appointment save also rewrites the inquiry's address and
-    // notes, blanking any field we omit. So read the inquiry first and send
-    // its current values back unchanged.
-    run: async (a, c) => {
-      const inquiryId = reqString(a, 'inquiryId', 64);
-      const appointmentDateTime = reqString(a, 'appointmentDateTime', 40);
-      const salespersonOneId = reqString(a, 'salespersonId', 64);
-      const inquiryText = await marketsharpRequest(c, {
-        method: 'GET',
-        path: `${company(c)}/inquiries/${encodeSegment(inquiryId, 'inquiryId')}`,
-        // The 2.0 GET defaults isAppointmentRequired=true, which hides an
-        // inquiry that has no active appointment yet: the usual booking case.
-        query: { isAppointmentRequired: false },
-      });
-      const inq = unwrapRecord(inquiryText);
-      const contactId = inq && typeof inq.contactId === 'string' ? inq.contactId : undefined;
-      // InquiryResourceModel marks none of these required. An absent field
-      // would go out as '' and blank the inquiry, so refuse unless every
-      // copied field is present (an explicit null stays an empty string).
-      const missing = inq ? PRESERVED_INQUIRY_FIELDS.filter((k) => !(k in inq)) : [];
-      const wrongRecord = inq && inq.id != null && String(inq.id) !== inquiryId;
-      if (!inq || !contactId || missing.length > 0 || wrongRecord) {
-        throw new MarketSharpApiError(
-          "Couldn't read that inquiry's contact and address, so no appointment was booked (booking without them would blank the inquiry's address)." +
-            (missing.length > 0 ? ` MarketSharp didn't return: ${missing.join(', ')}.` : '')
-        );
-      }
-      const str = (k: string) => (typeof inq[k] === 'string' ? (inq[k] as string) : inq[k] == null ? '' : String(inq[k]));
-      const body = compact({
-        contactId,
-        inquiryId,
-        appointmentDateTime,
-        salespersonOneId,
-        salespersonTwoId: optString(a, 'secondSalespersonId', 64),
-        appointmentType: optString(a, 'appointmentType', 100),
-        appointmentNotes: optString(a, 'notes', 8000),
-        appointmentSetById: c.employeeId,
-        inquiryNotes: str('notes'),
-        inquiryAddressLineOne: str('addressLineOne'),
-        inquiryAddressLineTwo: str('addressLineTwo'),
-        inquiryCity: str('city'),
-        inquiryState: str('state'),
-        inquiryZip: str('zip'),
-        inquiryAddressLatitude: str('latitude'),
-        inquiryAddressLongitude: str('longitude'),
-      });
-      return marketsharpRequest(c, { method: 'POST', path: `${company(c)}/appointments`, body });
-    },
   },
 ];
 

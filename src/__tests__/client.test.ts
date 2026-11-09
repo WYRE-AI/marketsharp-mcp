@@ -88,9 +88,9 @@ describe('client', () => {
     };
     const busy = (status: number) => new Response('busy', { status, headers: { 'Retry-After': '0' } });
 
-    it('does not retry a POST after a 503, so a write is never sent twice', async () => {
+    it('does not retry a POST after a 503, so a POST is never sent twice', async () => {
       const vendorCalls = okThen(busy(503));
-      await expect(marketsharpRequest(creds, { method: 'POST', path: '/companies/123/contactNotes', body: { note: 'n' } })).rejects.toThrow('HTTP 503');
+      await expect(marketsharpRequest(creds, { method: 'POST', path: '/companies/123/contacts/search', body: { last_name: 'Smith' } })).rejects.toThrow('HTTP 503');
       expect(vendorCalls()).toBe(1);
     });
 
@@ -102,7 +102,7 @@ describe('client', () => {
 
     it('still retries a POST after a 429, which MarketSharp rejected outright', async () => {
       const vendorCalls = okThen(busy(429));
-      expect(await marketsharpRequest(creds, { method: 'POST', path: '/companies/123/contactNotes', body: { note: 'n' } })).toContain('ok');
+      expect(await marketsharpRequest(creds, { method: 'POST', path: '/companies/123/contacts/search', body: { last_name: 'Smith' } })).toContain('ok');
       expect(vendorCalls()).toBe(2);
     });
   });

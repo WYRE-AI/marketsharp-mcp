@@ -39,15 +39,8 @@
         },
         {
           "name": "MARKETSHARP_EMPLOYEE_ID",
-          "description": "Optional MarketSharp employee ID. The contact, inquiry and job search tools, marketsharp_notes_list and marketsharp_contact_notes_create need it, and act with that employee's permissions.",
+          "description": "Optional MarketSharp employee ID. The contact, inquiry and job search tools and marketsharp_notes_list need it, and act with that employee's permissions.",
           "isRequired": false,
-          "format": "string"
-        },
-        {
-          "name": "MARKETSHARP_ENABLE_WRITES",
-          "description": "Set to true to expose the 4 create tools (notes, activities, appointments). Server-wide: applies to every connection this container serves, not per connection. Off by default. There are no delete tools.",
-          "isRequired": false,
-          "default": "false",
           "format": "string"
         },
         {

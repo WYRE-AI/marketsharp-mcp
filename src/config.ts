@@ -1,25 +1,19 @@
 /**
- * Tool tiers. Reads are always configured; the write tier (four create-only
- * tools) is added only when MARKETSHARP_ENABLE_WRITES is exactly true/1. The
- * per-request X-Conduit-Tool-Tiers header can only narrow that set.
+ * Every tool in this server is read-only, so `read` is the only tier. The
+ * tier machinery is kept identical to the rest of the fleet so Conduit's
+ * X-Conduit-Tool-Tiers contract behaves the same here: the header can only
+ * narrow the set, and a present but empty header means no tools.
  */
-export type ToolTier = 'read' | 'write';
+export type ToolTier = 'read';
 
-export const ALL_TIERS: readonly ToolTier[] = ['read', 'write'];
-
-export const DEFAULT_TIERS: readonly ToolTier[] = ['read'];
+export const ALL_TIERS: readonly ToolTier[] = ['read'];
 
 /** Header Conduit may send to narrow (never widen) the enabled tiers for one request. */
 export const TOOL_TIERS_HEADER = 'x-conduit-tool-tiers';
 
-/** Writes are off unless MARKETSHARP_ENABLE_WRITES is exactly true/1. There are no delete tools at all. */
-export function writesEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return /^(true|1)$/i.test((env.MARKETSHARP_ENABLE_WRITES ?? '').trim());
-}
-
-/** The container's tier set: DEFAULT_TIERS, plus write when MARKETSHARP_ENABLE_WRITES is on. */
-export function configuredTiers(env: NodeJS.ProcessEnv = process.env): ReadonlySet<ToolTier> {
-  return new Set<ToolTier>(writesEnabled(env) ? ALL_TIERS : DEFAULT_TIERS);
+/** The container's tier set. Nothing in the environment can widen it. */
+export function configuredTiers(): ReadonlySet<ToolTier> {
+  return new Set(ALL_TIERS);
 }
 
 /**

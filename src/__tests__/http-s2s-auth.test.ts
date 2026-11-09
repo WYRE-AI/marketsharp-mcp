@@ -748,11 +748,10 @@ describe('X-Conduit-Tool-Tiers (reduce-only)', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('with writes on, read narrows the 29 tools to the 25 reads', async () => {
+  it('MARKETSHARP_ENABLE_WRITES adds no tools, and a write tier header exposes none', async () => {
     process.env.MARKETSHARP_ENABLE_WRITES = 'true';
     const server = await listen();
-    expect(await toolNames(server.port, {})).toHaveLength(29);
-    expect(await toolNames(server.port, { 'x-conduit-tool-tiers': 'read' })).toHaveLength(25);
-    expect(await toolNames(server.port, { 'x-conduit-tool-tiers': 'write' })).toHaveLength(4);
+    expect(await toolNames(server.port, {})).toHaveLength(25);
+    expect(await toolNames(server.port, { 'x-conduit-tool-tiers': 'write' })).toEqual([]);
   });
 });

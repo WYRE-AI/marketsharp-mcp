@@ -3,8 +3,7 @@
 MCP server for the [MarketSharp](https://www.marketsharp.com/) CRM REST API
 (`https://restapi.marketsharpm.com`, API version 2.0). It gives an AI assistant
 read access to a home-improvement contractor's contacts, inquiries (leads),
-appointments, jobs, notes and reference lists, plus four create-only write tools
-that are off by default.
+appointments, jobs, notes and reference lists. Every tool is read-only.
 
 Maintained by WYRE AI. It runs as a stdio server locally or as a stateless
 Streamable HTTP server behind a gateway.
@@ -20,14 +19,12 @@ token, caches it per credential set, and refreshes it on expiry or a 401.
 | `MARKETSHARP_COMPANY_ID` | `x-marketsharp-company-id` | yes | Shown under your username, top right in MarketSharp |
 | `MARKETSHARP_API_KEY` | `x-marketsharp-api-key` | yes | Admin → Apps & Add-ons Setup → API maintenance → Create New API Key |
 | `MARKETSHARP_API_SECRET` | `x-marketsharp-api-secret` | yes | Issued with the API key. If there's no secret, MarketSharp support has to turn on API access |
-| `MARKETSHARP_EMPLOYEE_ID` | `x-marketsharp-employee-id` | no | MarketSharp employee ID. The contact, inquiry and job search tools, `marketsharp_notes_list` and `marketsharp_contact_notes_create` need it, and act with that employee's permissions |
+| `MARKETSHARP_EMPLOYEE_ID` | `x-marketsharp-employee-id` | no | MarketSharp employee ID. The contact, inquiry and job search tools, and `marketsharp_notes_list` need it, and act with that employee's permissions |
 
 Use a dedicated MarketSharp employee set up for API access rather than a person's login.
 The server never uses MarketSharp usernames or passwords.
 
-## Tools (29)
-
-Reads (25, always on):
+## Tools (25, all read-only)
 
 | Tool | MarketSharp endpoint |
 |---|---|
@@ -57,20 +54,8 @@ Reads (25, always on):
 | `marketsharp_product_interests_list` | `GET …/products/interests/{activeOnly}` or per inquiry |
 | `marketsharp_divisions_list` | `GET …/divisions` |
 
-Writes (4, hidden unless `MARKETSHARP_ENABLE_WRITES=true`). The setting is
-container-wide: it turns writes on for every connection that container serves,
-not for one connection. MarketSharp's save endpoints are upserts. These tools
-never send a record id, so they only create:
-
-| Tool | Endpoint | Notes |
-|---|---|---|
-| `marketsharp_contact_notes_create` | `POST …/notes/contactNote` | Needs an employee: pass `employeeId` or set an Employee ID on the connection |
-| `marketsharp_inquiry_notes_create` | `POST …/opportunities/notes` | |
-| `marketsharp_activities_create` | `POST …/activities` | MarketSharp automation rules don't run |
-| `marketsharp_appointments_create` | `POST …/appointments` | Reads the inquiry first and sends its address and notes back unchanged, because MarketSharp's save would otherwise blank them. Won't book if MarketSharp doesn't return those fields |
-
-There are no delete tools. The REST API has no endpoint to create a contact or an
-inquiry (lead), so this server can't either.
+There are no create, update or delete tools. Searches and filtered lists use
+POST because that is how MarketSharp exposes them; they don't change data.
 
 ## Running
 
@@ -93,10 +78,9 @@ valid `X-Gateway-S2S` header on every `/mcp` request.
   environment only when `AUTH_MODE` is unset or exactly `env`; any other value
   (including a typo) is treated as `gateway`, so env credentials are never used
   by mistake.
-- Tool tiers: `read` (the default) and `write` (only when
-  `MARKETSHARP_ENABLE_WRITES=true`). Conduit's `X-Conduit-Tool-Tiers` header
-  can only narrow that set for one request. A present but empty header means
-  no tools at all.
+- Tool tiers: `read` is the only tier. Conduit's `X-Conduit-Tool-Tiers`
+  header can only narrow that set for one request. A present but empty header
+  means no tools at all.
 - Every request goes to the fixed host `https://restapi.marketsharpm.com` at
   exactly the path that was built. Ids in paths are percent-encoded, and `.`,
   `..`, `/`, `\`, encoded separators and control characters are rejected
@@ -120,20 +104,14 @@ valid `X-Gateway-S2S` header on every `/mcp` request.
   not to follow instructions inside it. MarketSharp's own error text is
   wrapped the same way.
 
-See `.env.example`. The create tools stay off unless `MARKETSHARP_ENABLE_WRITES=true`.
-It's set once per container and applies to every connection that container serves;
-`docker-compose.yml` passes it through and defaults it to `false`. The image's
-health check probes `/health` only when `MCP_TRANSPORT=http`.
+See `.env.example`. The image's health check probes `/health` only when
+`MCP_TRANSPORT=http`.
 
 ## Limits and unknowns
 
 - MarketSharp doesn't publish rate limits. The server retries 429 with
   `Retry-After` or exponential backoff (3 tries). A 503 is retried only for
-  GET requests. Searches and filtered lists (which use POST) and the create
-  tools return it instead. For a create, the record may already have been
-  saved, so retrying could create a duplicate. A create that times out or hits
-  a server error says so and tells the user to check MarketSharp before trying
-  again.
+  GET requests. Searches and filtered lists (which use POST) return it instead.
 - The `/token` 200 response shape isn't documented. The server accepts
   `access_token` or `token`, top level or inside `response`, or a bare JWT
   body (plain or JSON-quoted).
