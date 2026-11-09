@@ -1,6 +1,214 @@
 {
-  "_source": "Swagger 2.0 document for restapi.marketsharpm.com (info.title 'MarketSharp CRM API 2.0'): request-body models of the POST endpoints the read tools call, trimmed to name, type, format, enum and required.",
+  "_source": "Swagger 2.0 document for restapi.marketsharpm.com (info.title 'MarketSharp CRM API 2.0'): the GET routes and POST endpoints the read tools call. GET routes keep the path template, operationId and declared query parameters; POST endpoints also keep the request-body model trimmed to name, type, format, enum and required.",
   "endpoints": {
+    "GET /companies": {
+      "operationId": "Company_GetCompanies",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}": {
+      "operationId": "Company_Get",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyid}/activities/types": {
+      "operationId": "ActivityTypes_GetActivityTypes",
+      "query": {
+        "includeInactive": {
+          "type": "boolean"
+        },
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/appointments/{appointmentId}": {
+      "operationId": "Appointments_GetAppointmentById",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/appointments/contacts/{contactId}": {
+      "operationId": "Appointments_GetAppointmentsByContactId",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/appointments/resultreasons/active": {
+      "operationId": "Appointments_GetAppointmentResultReasons",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/appointments/results/active": {
+      "operationId": "Appointments_GetAppoinmentResults",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/contacts/{contactId}": {
+      "operationId": "Contact_GetContactById",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/contacts/{contactId}/inquiries": {
+      "operationId": "Inquiries_GetInquiriesByContactId",
+      "query": {
+        "isAppointmentRequired": {
+          "type": "boolean"
+        },
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyid}/divisions": {
+      "operationId": "Division_Get",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/employees": {
+      "operationId": "Employees_GetEmployeeList",
+      "query": {
+        "s": {
+          "type": "string"
+        },
+        "isActiveOnly": {
+          "type": "boolean"
+        },
+        "page": {
+          "type": "integer"
+        },
+        "pageSize": {
+          "type": "integer"
+        },
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/inquiries/{inquiryId}": {
+      "operationId": "Inquiries_GetInquiryById",
+      "query": {
+        "isAppointmentRequired": {
+          "type": "boolean"
+        },
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/inquiries/statuses": {
+      "operationId": "Inquiries_GetAllInquiryStatus",
+      "query": {
+        "includeInactive": {
+          "type": "boolean"
+        },
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/jobs/{jobId}": {
+      "operationId": "Jobs_GetJobByJobId",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/notes/contact/{contactId}": {
+      "operationId": "Notes_GetAllNotes",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/notes/notetype/{noteTypeString}/contact/{contactId}": {
+      "operationId": "Notes_GetNotesByType",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/opportunities/{inquiryId}/notes/{noteType}": {
+      "operationId": "Inquiries_GetOpportunityNotes",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/primaryleadsources": {
+      "operationId": "PrimaryLeadSources_GetPrimaryLeadSources",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/primaryleadsources/{primaryLeadSourceId}/secondaryleadsources": {
+      "operationId": "PrimaryLeadSources_GetSecondaryLeadSources",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/primaryleadsources/{primaryLeadSourceId}/secondaryleadsources/active": {
+      "operationId": "PrimaryLeadSources_GetActiveSecondaryLeadSources",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/primaryleadsources/active": {
+      "operationId": "PrimaryLeadSources_GetActivePrimaryLeadSources",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/products/interests/{activeOnly}": {
+      "operationId": "Products_GetAllProductInterests",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/products/interests/leads/{leadId}": {
+      "operationId": "Products_GetProductInterestsByLeadId",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
     "POST /companies/{companyId}/search/global": {
       "operationId": "Search_GlobalSearch",
       "model": "GlobalSearchBindingModel",

@@ -33,9 +33,11 @@ their notes are also on [GitHub Releases](https://github.com/WYRE-AI/marketsharp
 - `typecheck`, `lint` (eslint plus the destructive-tool warning lint),
   `lint:destructive` and `smoke` (stdio, no network) scripts, an mcp-assert
   `evals/` suite, and gitleaks, CI and mcp-assert workflows.
-- A test that checks every POST body a tool builds against a vendored, trimmed
-  copy of the MarketSharp v2 request models (keys, required fields, types,
-  enums, query parameters).
+- A test that checks every request a tool builds, GET and POST, against a
+  vendored, trimmed copy of the MarketSharp v2 spec: the method and path must
+  match a spec route and query parameters must be ones it declares. POST
+  bodies are also checked against the request models (keys, required fields,
+  types, enums).
 
 ### Changed
 
