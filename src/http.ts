@@ -2,6 +2,7 @@ import { createServer as createHttpServer, type Server as HttpServer } from 'nod
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { createServer } from './server.js';
 import { runWithCredentials, setGatewayMode } from './client.js';
+import { configuredTiers, narrowTiers, TOOL_TIERS_HEADER } from './config.js';
 import { logger } from './utils/logger.js';
 import { MAX_REQUEST_BODY_BYTES } from './input-limits.js';
 import { verifyS2sHeader, S2S_HEADER } from './s2s-verify.js';
@@ -29,8 +30,12 @@ const KNOWN_PLACEHOLDER_SECRETS = new Set([
   's2s-secret',
 ]);
 
+/** Placeholder-looking values that aren't in the exact list above (e.g. "replace-with-openssl-rand-hex-32"). */
+const PLACEHOLDER_PATTERN = /replace|changeme|change-me|placeholder|example|your-?secret/i;
+
 const LOOPBACK_HOST = '127.0.0.1';
 const MIN_S2S_SECRET_LENGTH = 32;
+const WEAK_S2S_SECRET_PREFIX = 'Refusing to start HTTP transport: CONDUIT_S2S_SECRET';
 
 const SHORT_S2S_SECRET_ERROR = `CONDUIT_S2S_SECRET must be at least ${MIN_S2S_SECRET_LENGTH} characters.`;
 const INSECURE_DEV_ENV_ERROR = 'MCP_ALLOW_INSECURE_DEV requires NODE_ENV=development.';
@@ -69,6 +74,12 @@ const ID_RE = /^[A-Za-z0-9-]{1,64}$/;
 function headerValue(value: string | string[] | undefined): string | undefined {
   const raw = Array.isArray(value) ? value[0] : value;
   return typeof raw === 'string' && raw.length > 0 ? raw : undefined;
+}
+
+/** Raw tier header if present (even empty, which narrows to no tools); undefined if absent. */
+function tierHeader(value: string | string[] | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  return Array.isArray(value) ? value.join(',') : value;
 }
 
 function isLoopbackHost(host: string): boolean {
@@ -111,11 +122,13 @@ function resolveAuthMode(): AuthMode {
  */
 function resolveS2sSecret(): string {
   const secret = (process.env.CONDUIT_S2S_SECRET ?? '').trim();
-  if (secret && KNOWN_PLACEHOLDER_SECRETS.has(secret.toLowerCase())) {
+  if (secret && (KNOWN_PLACEHOLDER_SECRETS.has(secret.toLowerCase()) || PLACEHOLDER_PATTERN.test(secret))) {
     refuseStart(PLACEHOLDER_S2S_SECRET_ERROR);
   }
   if (secret) {
     if (secret.length < MIN_S2S_SECRET_LENGTH) refuseStart(SHORT_S2S_SECRET_ERROR);
+    if (/^(.{1,8}?)\1+$/.test(secret)) refuseStart(`${WEAK_S2S_SECRET_PREFIX} is a repeated character pattern.`);
+    if (new Set(secret).size < 8) refuseStart(`${WEAK_S2S_SECRET_PREFIX} has too few distinct characters.`);
     return secret;
   }
 
@@ -229,7 +242,8 @@ export async function startHttpServer(): Promise<HttpServer> {
       // context - switching to a stateful/SSE transport would let a
       // long-lived connection serve later messages under a stale/foreign
       // credential context.
-      const server = createServer();
+      // X-Conduit-Tool-Tiers can only narrow the container's tiers; present-but-empty means no tools.
+      const server = createServer(narrowTiers(configuredTiers(), tierHeader(req.headers[TOOL_TIERS_HEADER])));
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: undefined,
         enableJsonResponse: true,

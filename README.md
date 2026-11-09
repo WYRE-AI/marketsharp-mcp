@@ -37,10 +37,10 @@ Reads (25, always on):
 | `marketsharp_contacts_get` | `GET …/contacts/{contactId}` |
 | `marketsharp_contacts_search` | `POST …/contacts/search` (QuickFind, needs employee) |
 | `marketsharp_contacts_list` | `POST …/contacts/filter` (paged, modified-since / appointment window) |
-| `marketsharp_inquiries_get` | `GET …/inquiries/{inquiryId}` |
+| `marketsharp_inquiries_get` | `GET …/inquiries/{inquiryId}` (optional `isAppointmentRequired`; MarketSharp defaults it to true) |
 | `marketsharp_inquiries_list` | `POST …/inquiries/filter` (paged) |
 | `marketsharp_inquiries_search` | `POST …/inquiries/search` (QuickFind, needs employee) |
-| `marketsharp_inquiries_list_by_contact` | `GET …/contacts/{contactId}/inquiries` |
+| `marketsharp_inquiries_list_by_contact` | `GET …/contacts/{contactId}/inquiries` (optional `isAppointmentRequired`) |
 | `marketsharp_inquiry_statuses_list` | `GET …/inquiries/statuses` |
 | `marketsharp_inquiry_notes_list` | `GET …/opportunities/{inquiryId}/notes/{Inquiry\|Job}` |
 | `marketsharp_appointments_get` | `GET …/appointments/{appointmentId}` |
@@ -82,14 +82,35 @@ MARKETSHARP_COMPANY_ID=… MARKETSHARP_API_KEY=… MARKETSHARP_API_SECRET=… no
 ```
 
 HTTP (`MCP_TRANSPORT=http`, `/mcp` + `/health`) refuses to start without a real
-`CONDUIT_S2S_SECRET` (at least 32 characters, not a known placeholder) and
-requires a valid `X-Gateway-S2S` header on every `/mcp` request.
+`CONDUIT_S2S_SECRET` (at least 32 characters, not a known or placeholder-looking
+value, not a repeated pattern, at least 8 distinct characters) and requires a
+valid `X-Gateway-S2S` header on every `/mcp` request.
 
 - `AUTH_MODE` is `gateway` (the default when unset) or `env`. Any other value
   refuses to start. In `gateway` mode credentials come only from the
   `x-marketsharp-*` headers; `MARKETSHARP_*` env is never read. `env` is for a
-  single tenant and reads `MARKETSHARP_*` from the environment. Stdio always
-  uses the environment.
+  single tenant and reads `MARKETSHARP_*` from the environment. Stdio uses the
+  environment only when `AUTH_MODE` is unset or exactly `env`; any other value
+  (including a typo) is treated as `gateway`, so env credentials are never used
+  by mistake.
+- Tool tiers: `read` (the default) and `write` (only when
+  `MARKETSHARP_ENABLE_WRITES=true`). Conduit's `X-Conduit-Tool-Tiers` header
+  can only narrow that set for one request. A present but empty header means
+  no tools at all.
+- Every request goes to the fixed host `https://restapi.marketsharpm.com` at
+  exactly the path that was built. Ids in paths are percent-encoded, and `.`,
+  `..`, `/`, `\`, encoded separators and control characters are rejected
+  before any request. Redirects are refused (`redirect: 'manual'`, any 3xx is
+  an error), so the bearer token never leaves the host. Response bodies are
+  read with a 4 MiB cap.
+- Tool output, tool errors and log lines are redacted: the API key and secret
+  in use (env or per request), bearer tokens and JWTs become `[REDACTED]`.
+  Arguments a tool doesn't declare are dropped before it runs. Vendor errors
+  keep the HTTP status, MarketSharp's message and, when sent, the request id
+  (`x-request-id`, `request-id` or `x-correlation-id`).
+- Page sizes and record counts above the server's cap are capped, not
+  rejected. Pages are passed through as given; the server never fetches more
+  than one page per call.
 - `MCP_ALLOW_INSECURE_DEV=1` lets HTTP start without a secret, on 127.0.0.1
   only, and requires `NODE_ENV=development`. With any other `NODE_ENV` the
   server refuses to start.
@@ -125,9 +146,16 @@ health check probes `/health` only when `MCP_TRANSPORT=http`.
 ## Development
 
 ```bash
-npm test        # vitest
-npm run lint    # tsc --noEmit
+npm ci --ignore-scripts
+npm run typecheck        # tsc --noEmit
+npm run lint             # eslint + destructive-tool warning lint
+npm run lint:destructive # destructive-tool warning lint only
+npm run build
+npm test                 # vitest, no network
+npm run smoke            # spawns dist/index.js over stdio, no network
 ```
+
+`evals/` holds the mcp-assert suite that CI runs against the built server.
 
 Each release publishes `ghcr.io/wyre-ai/marketsharp-mcp`, and its release notes are on the GitHub Release for that version.
 

@@ -35,7 +35,7 @@ describe('client', () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe('https://restapi.marketsharpm.com/token');
     expect(init.method).toBe('POST');
-    expect(init.redirect).toBe('error');
+    expect(init.redirect).toBe('manual');
     expect(init.headers['Content-Type']).toBe('application/x-www-form-urlencoded');
     const form = new URLSearchParams(init.body);
     expect(Object.fromEntries(form)).toEqual({ grant_type: 'password', companyId: '123', apikey: 'key-abc', apisecret: 'sec-xyz' });
@@ -154,9 +154,9 @@ describe('client', () => {
       expect(getCredentials(ENV)).toBeNull();
     });
 
-    it('stdio ignores AUTH_MODE: only the HTTP server turns gateway mode on', () => {
-      // The image sets AUTH_MODE=gateway; MCP_TRANSPORT=stdio in that image must still use env.
-      expect(getCredentials({ ...ENV, AUTH_MODE: 'gateway' })).toMatchObject({ companyId: '9' });
+    it('AUTH_MODE=gateway never reads env credentials, even over stdio (fails closed)', () => {
+      expect(getCredentials({ ...ENV, AUTH_MODE: 'gateway' })).toBeNull();
+      expect(getCredentials({ ...ENV, AUTH_MODE: 'env' })).toMatchObject({ companyId: '9' });
     });
 
     it('still returns scoped credentials in gateway mode', () => {
@@ -171,7 +171,7 @@ describe('client', () => {
     const [url, init] = fetchMock.mock.calls[1];
     expect(url).toBe('https://restapi.marketsharpm.com/companies/123/divisions?a=b&api-version=2.0');
     expect(init.headers.Authorization).toBe('Bearer tk');
-    expect(init.redirect).toBe('error');
+    expect(init.redirect).toBe('manual');
     expect(JSON.parse(out)).toEqual([{ id: 1 }]);
   });
 

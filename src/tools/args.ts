@@ -30,6 +30,15 @@ export function optInt(args: Args, key: string, min: number, max: number): numbe
   return n;
 }
 
+/** A page size or record count: whole number at least `min`; anything above `max` is capped to `max`, not rejected. */
+export function optLimit(args: Args, key: string, min: number, max: number): number | undefined {
+  const v = args[key];
+  if (v === undefined || v === null || v === '') return undefined;
+  const n = typeof v === 'number' ? v : Number(v);
+  if (!Number.isInteger(n) || n < min) throw new MarketSharpApiError(`${key} must be a whole number of at least ${min}.`);
+  return Math.min(n, max);
+}
+
 export function optBool(args: Args, key: string): boolean | undefined {
   const v = args[key];
   if (v === undefined || v === null) return undefined;
@@ -47,7 +56,7 @@ export function optEnum<T extends string>(args: Args, key: string, allowed: read
   return hit;
 }
 
-export function optStringArray(args: Args, key: string, maxItems = 200): string[] | undefined {
+export function optStringArray(args: Args, key: string, maxItems = 100): string[] | undefined {
   const v = args[key];
   if (v === undefined || v === null) return undefined;
   if (!Array.isArray(v) || v.some((x) => typeof x !== 'string' && typeof x !== 'number')) {

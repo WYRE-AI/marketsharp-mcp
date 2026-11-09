@@ -1,6 +1,16 @@
-import { AsyncLocalStorage } from 'node:async_hooks';
+/**
+ * The only path to MarketSharp. The host is a compile-time constant (never
+ * tenant-supplied), so there is no base-URL or DNS-pinning layer. What
+ * remains is the request contract:
+ * - redirect: 'manual', and every 3xx is an error (the token never leaves the host);
+ * - the URL is built from an already-encoded path and checked to stay on
+ *   https://restapi.marketsharpm.com at exactly that path;
+ * - response bodies are bounded while streaming;
+ * - vendor errors keep HTTP status, MarketSharp's message and any request id.
+ */
 import { createHash } from 'node:crypto';
 import { MAX_RESPONSE_CHARS } from './input-limits.js';
+import { scopedCredentials } from './scope.js';
 import { wrapVendorDetail } from './untrusted.js';
 import { logger } from './utils/logger.js';
 import type { MarketSharpCredentials } from './types.js';
@@ -18,37 +28,42 @@ const MAX_BACKOFF_MS = 10_000;
 const DEFAULT_TOKEN_TTL_S = 15 * 60;
 /** Refresh this long before the reported expiry. */
 const TOKEN_SKEW_S = 60;
+/** Upper bound on any upstream response body, enforced while streaming and before parsing. */
+export const MAX_UPSTREAM_BYTES = 4 * 1024 * 1024;
+/** Error and /token bodies are small; read at most this much of them. */
+const MAX_SMALL_BODY_BYTES = 64 * 1024;
+const MAX_SEGMENT = 256;
+/** Response headers that may carry a request id for MarketSharp support (which one MarketSharp sends is undocumented). */
+const REQUEST_ID_HEADERS = ['x-request-id', 'request-id', 'x-correlation-id'];
 export { MAX_RESPONSE_CHARS };
-
-// ---------------------------------------------------------------------------
-// Request-scoped credentials. Gateway mode runs each HTTP request inside
-// runWithCredentials(); stdio / AUTH_MODE=env fall back to process.env.
-// ---------------------------------------------------------------------------
-const credStore = new AsyncLocalStorage<MarketSharpCredentials>();
-
-export function runWithCredentials<T>(creds: MarketSharpCredentials, fn: () => T): T {
-  return credStore.run(creds, fn);
-}
+export { runWithCredentials } from './scope.js';
 
 let gatewayMode = false;
 
 /**
  * Set by the HTTP server at startup. In gateway mode MARKETSHARP_* env is never
- * read. Stdio never sets it, so stdio always uses env credentials.
+ * read. Irreversible in practice: nothing but tests turns it off.
  */
 export function setGatewayMode(on: boolean): void {
   gatewayMode = on;
 }
 
+/**
+ * Fails closed: the HTTP server's lock, or any AUTH_MODE other than unset or
+ * exactly 'env' (including typos), means gateway, so env credentials are
+ * never used by mistake. Stdio with AUTH_MODE unset uses env.
+ */
+function isGatewayMode(env: NodeJS.ProcessEnv): boolean {
+  if (gatewayMode) return true;
+  const raw = (env.AUTH_MODE ?? '').trim();
+  return raw !== '' && raw !== 'env';
+}
+
 export function getCredentials(env: NodeJS.ProcessEnv = process.env): MarketSharpCredentials | null {
-  const scoped = credStore.getStore();
+  const scoped = scopedCredentials();
   if (scoped) return scoped;
-  if (gatewayMode) {
-    logger.warn('Missing request-scoped MarketSharp credentials in gateway mode', {
-      hasCompanyId: false,
-      hasApiKey: false,
-      hasApiSecret: false,
-    });
+  if (isGatewayMode(env)) {
+    logger.warn('Missing request-scoped MarketSharp credentials in gateway mode; MARKETSHARP_* env is never read');
     return null;
   }
   const companyId = env.MARKETSHARP_COMPANY_ID?.trim();
@@ -67,13 +82,14 @@ export function getCredentials(env: NodeJS.ProcessEnv = process.env): MarketShar
 }
 
 // ---------------------------------------------------------------------------
-// Errors. Messages never include credential values or the bearer token.
+// Errors. Messages never include credential values or the bearer token; the
+// dispatcher also redacts them as a second line of defence.
 // ---------------------------------------------------------------------------
 export class MarketSharpAuthError extends Error {}
 export class MarketSharpForbiddenError extends Error {}
 export class MarketSharpRateLimitError extends Error {}
 export class MarketSharpApiError extends Error {
-  constructor(message: string, readonly status?: number) {
+  constructor(message: string, readonly status?: number, readonly requestId?: string) {
     super(message);
   }
 }
@@ -142,6 +158,15 @@ function detailSuffix(detail: string | undefined): string {
   return `: ${wrapVendorDetail(d)}${/[.!?]$/.test(d) ? '' : '.'}`;
 }
 
+/** The first request id header MarketSharp sent, shape-limited so it can't carry anything else. */
+function vendorRequestId(res: Response): string | undefined {
+  for (const name of REQUEST_ID_HEADERS) {
+    const v = res.headers.get(name)?.trim();
+    if (v && /^[A-Za-z0-9._:-]{1,128}$/.test(v)) return v;
+  }
+  return undefined;
+}
+
 /** Logs why a fetch failed (error name and cause code only: no URL, headers, body or credentials). */
 function logFetchFailure(message: string, method: string, err: unknown): void {
   logger.warn(message, {
@@ -149,6 +174,43 @@ function logFetchFailure(message: string, method: string, err: unknown): void {
     name: (err as Error)?.name,
     code: (err as { cause?: { code?: unknown } })?.cause?.code,
   });
+}
+
+function isRedirect(res: Response): boolean {
+  return (res.status >= 300 && res.status < 400) || res.type === 'opaqueredirect';
+}
+
+async function refuseRedirect(res: Response): Promise<never> {
+  await res.body?.cancel().catch(() => undefined);
+  throw new MarketSharpApiError(`MarketSharp answered with a redirect (HTTP ${res.status}); refusing to follow it.`, res.status);
+}
+
+/** Reads a response body as text, cancelling the stream as soon as it exceeds maxBytes. */
+async function readBoundedText(res: Response, maxBytes: number): Promise<string> {
+  const tooLarge = () =>
+    new MarketSharpApiError(
+      `MarketSharp's response exceeded ${maxBytes} bytes. Narrow the request: use filters, a smaller page size, or fewer records.`,
+    );
+  const declared = Number.parseInt(res.headers.get('content-length') ?? '', 10);
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await res.body?.cancel().catch(() => undefined);
+    throw tooLarge();
+  }
+  if (!res.body) return '';
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      throw tooLarge();
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString('utf8');
 }
 
 async function mintToken(c: MarketSharpCredentials): Promise<string> {
@@ -165,7 +227,7 @@ async function mintToken(c: MarketSharpCredentials): Promise<string> {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
       body: form.toString(),
-      redirect: 'error',
+      redirect: 'manual',
       signal: AbortSignal.timeout(TOKEN_TIMEOUT_MS),
     });
   } catch (err) {
@@ -174,7 +236,8 @@ async function mintToken(c: MarketSharpCredentials): Promise<string> {
       "Couldn't reach MarketSharp to sign in. Check your network and try again in a few minutes."
     );
   }
-  const text = await res.text().catch(() => '');
+  if (isRedirect(res)) await refuseRedirect(res);
+  const text = await readBoundedText(res, MAX_SMALL_BODY_BYTES).catch(() => '');
   if (!res.ok) {
     if (res.status === 400 || res.status === 401 || res.status === 403) {
       const detail = vendorMessage(text);
@@ -238,29 +301,46 @@ export async function getToken(c: MarketSharpCredentials, forceRefresh = false):
 
 export interface MarketSharpRequest {
   method: 'GET' | 'POST';
-  /** Path relative to the host, already encoded, e.g. /companies/123/contacts/abc. */
+  /** Path relative to the host, every dynamic segment already passed through encodeSegment(). */
   path: string;
   query?: Record<string, string | number | boolean | undefined>;
   body?: unknown;
 }
 
+/**
+ * Returns one URL path segment, percent-encoded. Rejects anything that could
+ * change which endpoint is hit: empty, `.`, `..`, `/` or `\`, percent-encoded
+ * separators or dots, and control characters. buildUrl() also checks the
+ * final URL against the expected path.
+ */
 export function encodeSegment(value: unknown, name: string): string {
   const s = String(value ?? '').trim();
   if (!s) throw new MarketSharpApiError(`${name} is required.`);
-  if (s === '.' || s === '..') throw new MarketSharpApiError(`${name} is not a valid id.`);
+  if (
+    s.length > MAX_SEGMENT ||
+    s === '.' ||
+    s === '..' ||
+    /[/\\]/.test(s) ||
+    /%(2f|5c|2e)/i.test(s) ||
+    // eslint-disable-next-line no-control-regex
+    /[\u0000-\u001f\u007f]/.test(s)
+  ) {
+    throw new MarketSharpApiError(`${name} is not a valid id: use a single MarketSharp id (1-${MAX_SEGMENT} characters) without ".", "..", "/" or "\\".`);
+  }
   return encodeURIComponent(s);
 }
 
-function buildUrl(req: MarketSharpRequest): string {
-  if (!req.path.startsWith('/') || req.path.includes('..') || req.path.includes('//')) {
-    throw new MarketSharpApiError('Invalid MarketSharp path.');
-  }
-  const url = new URL(MARKETSHARP_BASE_URL + req.path);
-  for (const [k, v] of Object.entries(req.query ?? {})) {
+/** Builds the request URL on the fixed origin and refuses anything that doesn't land at exactly `path`. */
+export function buildUrl(path: string, query: MarketSharpRequest['query'] = {}): URL {
+  const invalid = () => new MarketSharpApiError('Invalid MarketSharp path.');
+  if (!path.startsWith('/') || path.startsWith('//') || path.includes('..') || path.includes('\\')) throw invalid();
+  const url = new URL(path, MARKETSHARP_BASE_URL);
+  if (url.origin !== MARKETSHARP_BASE_URL || url.pathname !== path) throw invalid();
+  for (const [k, v] of Object.entries(query)) {
     if (v !== undefined && v !== '') url.searchParams.set(k, String(v));
   }
   url.searchParams.set('api-version', MARKETSHARP_API_VERSION);
-  return url.toString();
+  return url;
 }
 
 /** Render a response body for the model: pretty JSON when parseable, capped in size. */
@@ -294,7 +374,7 @@ export async function marketsharpRequest(creds: MarketSharpCredentials | null, r
       'MarketSharp credentials are not configured. Set the Company ID, API key and API secret on this connection.'
     );
   }
-  const url = buildUrl(req);
+  const url = buildUrl(req.path, req.query).toString();
   const body = req.body === undefined ? undefined : JSON.stringify(req.body);
   const timeout = req.method === 'GET' ? READ_TIMEOUT_MS : WRITE_TIMEOUT_MS;
   let refreshed = false;
@@ -305,7 +385,7 @@ export async function marketsharpRequest(creds: MarketSharpCredentials | null, r
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     let res: Response;
     try {
-      res = await fetch(url, { method: req.method, headers, body, redirect: 'error', signal: AbortSignal.timeout(timeout) });
+      res = await fetch(url, { method: req.method, headers, body, redirect: 'manual', signal: AbortSignal.timeout(timeout) });
     } catch (err) {
       logFetchFailure('MarketSharp request failed', req.method, err);
       const timedOut = (err as Error).name === 'TimeoutError';
@@ -313,6 +393,7 @@ export async function marketsharpRequest(creds: MarketSharpCredentials | null, r
         timedOut ? "Couldn't reach MarketSharp: it didn't respond in time." : "Couldn't reach MarketSharp: the connection failed."
       );
     }
+    if (isRedirect(res)) await refuseRedirect(res);
 
     if (res.status === 401 && !refreshed) {
       await res.body?.cancel().catch(() => undefined);
@@ -330,32 +411,35 @@ export async function marketsharpRequest(creds: MarketSharpCredentials | null, r
       await sleep(Math.min(wait, MAX_BACKOFF_MS));
       continue;
     }
-    const text = await res.text().catch(() => '');
-    if (!res.ok) {
-      const detail = vendorMessage(text);
-      const suffix = detailSuffix(detail);
-      if (res.status === 401) {
-        throw new MarketSharpAuthError(`MarketSharp didn't accept this connection's sign-in (HTTP 401)${suffix} Check the Company ID, API key, API secret and Employee ID on this connection.`);
-      }
-      if (res.status === 403) {
-        throw new MarketSharpForbiddenError(
-          `MarketSharp says this API key or employee doesn't have permission for that (HTTP 403)${suffix} Ask a MarketSharp admin to give the connection's employee that permission, or use a different Employee ID.`
-        );
-      }
-      if (res.status === 429) {
-        throw new MarketSharpRateLimitError('MarketSharp is rate-limiting this connection (HTTP 429). Try again shortly.');
-      }
-      if (res.status === 404) {
-        throw new MarketSharpApiError(`MarketSharp couldn't find that record (HTTP 404)${suffix} Check the ID, or look the record up with marketsharp_search_global.`, 404);
-      }
-      // The "problem on its side" wording is for server-side failures; other statuses (e.g. 400) keep the neutral text.
-      throw new MarketSharpApiError(
-        res.status >= 500
-          ? `MarketSharp had a problem on its side (HTTP ${res.status})${suffix}`
-          : `MarketSharp returned HTTP ${res.status}${suffix}`,
-        res.status
-      );
-    }
-    return renderBody(text);
+    if (!res.ok) throw await vendorError(res);
+    return renderBody(await readBoundedText(res, MAX_UPSTREAM_BYTES));
   }
+}
+
+async function vendorError(res: Response): Promise<Error> {
+  const text = await readBoundedText(res, MAX_SMALL_BODY_BYTES).catch(() => '');
+  const suffix = detailSuffix(vendorMessage(text));
+  const requestId = vendorRequestId(res);
+  const rid = requestId ? ` (MarketSharp request id: ${requestId})` : '';
+  const status = res.status;
+  if (status === 401) {
+    return new MarketSharpAuthError(`MarketSharp didn't accept this connection's sign-in (HTTP 401)${suffix} Check the Company ID, API key, API secret and Employee ID on this connection.${rid}`);
+  }
+  if (status === 403) {
+    return new MarketSharpForbiddenError(
+      `MarketSharp says this API key or employee doesn't have permission for that (HTTP 403)${suffix} Ask a MarketSharp admin to give the connection's employee that permission, or use a different Employee ID.${rid}`
+    );
+  }
+  if (status === 429) {
+    return new MarketSharpRateLimitError(`MarketSharp is rate-limiting this connection (HTTP 429). Try again shortly.${rid}`);
+  }
+  if (status === 404) {
+    return new MarketSharpApiError(`MarketSharp couldn't find that record (HTTP 404)${suffix} Check the ID, or look the record up with marketsharp_search_global.${rid}`, 404, requestId);
+  }
+  // The "problem on its side" wording is for server-side failures; other statuses (e.g. 400) keep the neutral text.
+  return new MarketSharpApiError(
+    (status >= 500 ? `MarketSharp had a problem on its side (HTTP ${status})${suffix}` : `MarketSharp returned HTTP ${status}${suffix}`) + rid,
+    status,
+    requestId
+  );
 }

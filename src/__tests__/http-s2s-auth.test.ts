@@ -369,7 +369,7 @@ describe('HTTP startup', () => {
   });
 
   it('starts with a 32-character secret', async () => {
-    process.env.CONDUIT_S2S_SECRET = 'a1b2c3d4'.repeat(4);
+    process.env.CONDUIT_S2S_SECRET = 'Zq8vN2kLw5Rt1Yx7Hc4Mb9Pd3Gf6Js0A';
     const exitSpy = mockExit();
     await listen();
     expect(exitSpy).not.toHaveBeenCalled();
@@ -677,5 +677,82 @@ describe('HTTP /mcp env mode', () => {
     });
     expect(response.status).toBe(200);
     expect(String(fetchMock.mock.calls[1][0])).toBe('https://restapi.marketsharpm.com/companies/9999/divisions?api-version=2.0');
+  });
+});
+
+describe('HTTP startup refuses weak S2S secrets', () => {
+  it.each([
+    ['a'.repeat(64), 'repeated'],
+    ['abcd'.repeat(10), 'repeated'],
+    ['replace-with-openssl-rand-hex-32-0123456789', 'placeholder'],
+    ['0101010101010101010101010101010122', 'too few distinct'],
+  ])('refuses %j (%s) without logging it', async (secret, why) => {
+    process.env.CONDUIT_S2S_SECRET = secret;
+    const logs = captureStderr();
+    const exitSpy = mockExit();
+    try {
+      await expect(startHttpServer()).rejects.toThrow('process.exit:1');
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(logs.text()).toContain(why);
+      expect(logs.text()).not.toContain(secret);
+    } finally {
+      logs.restore();
+    }
+  });
+});
+
+describe('X-Conduit-Tool-Tiers (reduce-only)', () => {
+  const fetchMock = vi.fn(async (url: string) =>
+    String(url).endsWith('/token') ? jsonResponse({ access_token: 'jwt' }) : jsonResponse([{ id: '1' }]),
+  );
+  const listCall = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
+  const headers = (extra: Record<string, string> = {}) =>
+    mcpHeaders({
+      'x-gateway-s2s': mintS2sHeader(S2S_SECRET),
+      'x-marketsharp-company-id': '4321',
+      'x-marketsharp-api-key': HEADER_API_KEY,
+      'x-marketsharp-api-secret': HEADER_API_SECRET,
+      ...extra,
+    });
+
+  beforeEach(() => {
+    process.env.CONDUIT_S2S_SECRET = S2S_SECRET;
+    process.env.AUTH_MODE = 'gateway';
+    fetchMock.mockClear();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+  afterEach(() => {
+    delete process.env.MARKETSHARP_ENABLE_WRITES;
+  });
+
+  async function toolNames(port: number, extra: Record<string, string>): Promise<string[]> {
+    const res = await sendHttp({ port, method: 'POST', path: '/mcp', headers: headers(extra), body: listCall });
+    expect(res.status).toBe(200);
+    return (JSON.parse(res.body) as { result: { tools: Array<{ name: string }> } }).result.tools.map((t) => t.name);
+  }
+
+  it('absent header lists the 25 read tools; read or wider stays at 25', async () => {
+    const server = await listen();
+    expect(await toolNames(server.port, {})).toHaveLength(25);
+    expect(await toolNames(server.port, { 'x-conduit-tool-tiers': 'read' })).toHaveLength(25);
+    expect(await toolNames(server.port, { 'x-conduit-tool-tiers': 'read,write,admin' })).toHaveLength(25);
+  });
+
+  it('an empty header exposes zero tools and a call is an unknown tool with no upstream request', async () => {
+    const server = await listen();
+    expect(await toolNames(server.port, { 'x-conduit-tool-tiers': '' })).toEqual([]);
+    const res = await sendHttp({ port: server.port, method: 'POST', path: '/mcp', headers: headers({ 'x-conduit-tool-tiers': '' }), body: groupsCall });
+    const body = JSON.parse(res.body) as { result: { isError: boolean; content: Array<{ text: string }> } };
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content[0].text).toBe('Error: Unknown tool: marketsharp_divisions_list');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('with writes on, read narrows the 29 tools to the 25 reads', async () => {
+    process.env.MARKETSHARP_ENABLE_WRITES = 'true';
+    const server = await listen();
+    expect(await toolNames(server.port, {})).toHaveLength(29);
+    expect(await toolNames(server.port, { 'x-conduit-tool-tiers': 'read' })).toHaveLength(25);
+    expect(await toolNames(server.port, { 'x-conduit-tool-tiers': 'write' })).toHaveLength(4);
   });
 });

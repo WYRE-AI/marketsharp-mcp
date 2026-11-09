@@ -4,10 +4,11 @@ import {
   MarketSharpApiError,
   type MarketSharpRequest,
 } from '../client.js';
+import type { ToolTier } from '../config.js';
 import type { MarketSharpCredentials } from '../types.js';
-import { compact, optBool, optEnum, optInt, optString, optStringArray, reqString, type Args } from './args.js';
+import { compact, optBool, optEnum, optInt, optLimit, optString, optStringArray, reqString, type Args } from './args.js';
 
-export type ToolTier = 'read' | 'write';
+export type { ToolTier };
 
 export interface ToolDef {
   name: string;
@@ -30,6 +31,8 @@ const NOTE_TYPES = [
   'JobProduct', 'JobProductDetail', 'Production', 'Proposal', 'ServiceOrder', 'Testimonial', 'WorkOrder',
 ] as const;
 const EMPLOYEE_NOTE = " Needs an Employee ID on the connection, and runs with that employee's MarketSharp permissions.";
+/** MarketSharp's isAppointmentRequired query flag; its documented default (true) hides inquiries with no appointment. */
+const APPOINTMENT_REQUIRED = b('Only inquiries that have an appointment. MarketSharp defaults to true, so pass false to include inquiries with no appointment yet.');
 
 const company = (c: MarketSharpCredentials) => `/companies/${encodeSegment(c.companyId, 'Company ID')}`;
 
@@ -54,7 +57,7 @@ function searchBody(args: Args, extraKeys: string[] = []): Record<string, unknow
   if (!keys.some((k) => body[k] !== undefined)) {
     throw new MarketSharpApiError(`Give at least one search field: ${keys.join(', ')}.`);
   }
-  body.numberOfRecords = optInt(args, 'numberOfRecords', 1, 500);
+  body.numberOfRecords = optLimit(args, 'numberOfRecords', 1, 500);
   return compact(body);
 }
 
@@ -117,7 +120,7 @@ const TOOL_DEFS: ToolDef[] = [
       body: {
         entry: reqString(a, 'query', 200),
         searchObjectType: optEnum(a, 'type', ['All', 'Contact', 'Inquiry', 'Job'] as const) ?? 'All',
-        numberOfRecords: optInt(a, 'numberOfRecords', 1, 200) ?? 25,
+        numberOfRecords: optLimit(a, 'numberOfRecords', 1, 200) ?? 25,
         multiCompany: false,
       },
     }),
@@ -161,7 +164,7 @@ const TOOL_DEFS: ToolDef[] = [
         end_appointment_datetime: optString(a, 'appointmentTo', 40),
         appointment_salesperson_id: optString(a, 'salespersonId', 64),
         pageNumber: optInt(a, 'pageNumber', 1, 100000) ?? 1,
-        rowsPerPage: optInt(a, 'rowsPerPage', 1, 1000) ?? DEFAULT_ROWS,
+        rowsPerPage: optLimit(a, 'rowsPerPage', 1, 1000) ?? DEFAULT_ROWS,
       }),
     }),
   },
@@ -171,8 +174,16 @@ const TOOL_DEFS: ToolDef[] = [
     tier: 'read',
     description:
       'Get one inquiry (lead) by ID: date, status, lead sources, product interests, address and notes.',
-    inputSchema: { type: 'object', properties: { inquiryId: s('MarketSharp inquiry ID.') }, required: ['inquiryId'] },
-    build: (a, c) => ({ method: 'GET', path: `${company(c)}/inquiries/${encodeSegment(reqString(a, 'inquiryId'), 'inquiryId')}` }),
+    inputSchema: {
+      type: 'object',
+      properties: { inquiryId: s('MarketSharp inquiry ID.'), appointmentRequired: APPOINTMENT_REQUIRED },
+      required: ['inquiryId'],
+    },
+    build: (a, c) => ({
+      method: 'GET',
+      path: `${company(c)}/inquiries/${encodeSegment(reqString(a, 'inquiryId'), 'inquiryId')}`,
+      query: { isAppointmentRequired: optBool(a, 'appointmentRequired') },
+    }),
   },
   {
     name: 'marketsharp_inquiries_list',
@@ -202,7 +213,7 @@ const TOOL_DEFS: ToolDef[] = [
         end_appointment_datetime: optString(a, 'appointmentTo', 40),
         appointment_salesperson_id: optString(a, 'salespersonId', 64),
         pageNumber: optInt(a, 'pageNumber', 1, 100000) ?? 1,
-        rowsPerPage: optInt(a, 'rowsPerPage', 1, 1000) ?? DEFAULT_ROWS,
+        rowsPerPage: optLimit(a, 'rowsPerPage', 1, 1000) ?? DEFAULT_ROWS,
       }),
     }),
   },
@@ -217,10 +228,15 @@ const TOOL_DEFS: ToolDef[] = [
     name: 'marketsharp_inquiries_list_by_contact',
     tier: 'read',
     description: 'List every inquiry (lead) for one contact.',
-    inputSchema: { type: 'object', properties: { contactId: s('MarketSharp contact ID.') }, required: ['contactId'] },
+    inputSchema: {
+      type: 'object',
+      properties: { contactId: s('MarketSharp contact ID.'), appointmentRequired: APPOINTMENT_REQUIRED },
+      required: ['contactId'],
+    },
     build: (a, c) => ({
       method: 'GET',
       path: `${company(c)}/contacts/${encodeSegment(reqString(a, 'contactId'), 'contactId')}/inquiries`,
+      query: { isAppointmentRequired: optBool(a, 'appointmentRequired') },
     }),
   },
   {
@@ -277,7 +293,7 @@ const TOOL_DEFS: ToolDef[] = [
         modifiedFrom: s(`Only appointments changed on or after this time. ${DATE_HINT}`),
         modifiedTo: s(`Only appointments changed on or before this time. ${DATE_HINT}`),
         salespersonId: s('Only this salesperson (employee ID).'),
-        inquiryIds: { type: 'array', items: { type: 'string' }, description: 'Only appointments for these inquiry IDs.' },
+        inquiryIds: { type: 'array', items: { type: 'string' }, maxItems: 100, description: 'Only appointments for these inquiry IDs (at most 100).' },
         ...pagingProps,
       },
     },
@@ -292,7 +308,7 @@ const TOOL_DEFS: ToolDef[] = [
         appointment_salesperson_id: optString(a, 'salespersonId', 64),
         inquiry_ids: optStringArray(a, 'inquiryIds'),
         pageNumber: optInt(a, 'pageNumber', 1, 100000) ?? 1,
-        rowsPerPage: optInt(a, 'rowsPerPage', 1, 1000) ?? DEFAULT_ROWS,
+        rowsPerPage: optLimit(a, 'rowsPerPage', 1, 1000) ?? DEFAULT_ROWS,
       }),
     }),
   },
@@ -350,7 +366,7 @@ const TOOL_DEFS: ToolDef[] = [
     build: (a, c) => ({
       method: 'POST',
       path: `${company(c)}/jobs/opportunities`,
-      body: { fromDate: reqString(a, 'fromDate', 40), numberOfRecords: optInt(a, 'numberOfRecords', 1, 1000) ?? 100 },
+      body: { fromDate: reqString(a, 'fromDate', 40), numberOfRecords: optLimit(a, 'numberOfRecords', 1, 1000) ?? 100 },
     }),
   },
   // ------------------------------------------------------------------ notes
@@ -407,7 +423,7 @@ const TOOL_DEFS: ToolDef[] = [
         s: optString(a, 'search', 100),
         isActiveOnly: optBool(a, 'activeOnly') ?? true,
         page: optInt(a, 'page', 1, 10000) ?? 1,
-        pageSize: optInt(a, 'pageSize', 1, 500) ?? 100,
+        pageSize: optLimit(a, 'pageSize', 1, 500) ?? 100,
       },
     }),
   },

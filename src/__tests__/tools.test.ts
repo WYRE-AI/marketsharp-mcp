@@ -105,7 +105,7 @@ describe('read tools build the documented requests', () => {
     ['marketsharp_companies_get', {}, 'GET', '/companies/123'],
     ['marketsharp_search_global', { query: 'Smith', type: 'contact' }, 'POST', '/companies/123/search/global',
       { entry: 'Smith', searchObjectType: 'Contact', numberOfRecords: 25, multiCompany: false }],
-    ['marketsharp_contacts_get', { contactId: 'a/b' }, 'GET', '/companies/123/contacts/a%2Fb'],
+    ['marketsharp_contacts_get', { contactId: 'a b' }, 'GET', '/companies/123/contacts/a%20b'],
     ['marketsharp_contacts_search', { last_name: 'Smith', numberOfRecords: 5 }, 'POST', '/companies/123/contacts/search',
       { last_name: 'Smith', numberOfRecords: 5 }],
     ['marketsharp_contacts_list', { modifiedSince: '2026-10-01' }, 'POST', '/companies/123/contacts/filter',
@@ -159,7 +159,8 @@ describe('read tools build the documented requests', () => {
       ['marketsharp_contacts_search', {}],
       ['marketsharp_contacts_get', {}],
       ['marketsharp_contacts_get', { contactId: '..' }],
-      ['marketsharp_contacts_list', { rowsPerPage: 5000 }],
+      ['marketsharp_contacts_get', { contactId: 'a/b' }],
+      ['marketsharp_contacts_list', { rowsPerPage: 0 }],
       ['marketsharp_search_global', { query: 'x', type: 'Invoice' }],
     ] as const) {
       const { result } = await call(name, args as Record<string, unknown>);
