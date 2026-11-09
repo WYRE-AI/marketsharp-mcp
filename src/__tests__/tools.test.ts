@@ -101,6 +101,25 @@ describe('tool surface', () => {
     }
   });
 
+  it('names the View Opportunity Note permission on inquiry_notes_list', () => {
+    const t = TOOLS.find((x) => x.name === 'marketsharp_inquiry_notes_list')!;
+    expect(t.description).toContain('Needs an Employee ID on the connection');
+    expect(t.description).toContain('View Opportunity Note permission');
+  });
+
+  it('warns that opportunities_list cannot page', () => {
+    const t = TOOLS.find((x) => x.name === 'marketsharp_opportunities_list')!;
+    expect(t.description).toContain('Returns at most numberOfRecords (max 1000) with no paging; if you get exactly that many, narrow fromDate.');
+  });
+
+  it("states no MarketSharp default the spec doesn't document", () => {
+    for (const t of TOOLS) {
+      for (const key of ['numberOfRecords', 'rowsPerPage']) {
+        if (key in t.inputSchema.properties) expect(propDescription(t, key), `${t.name}.${key}`).not.toMatch(/MarketSharp defaults/);
+      }
+    }
+  });
+
   it('tells the model how to spot the last page on every filter list', () => {
     const paged = TOOLS.filter((t) => 'rowsPerPage' in t.inputSchema.properties);
     expect(paged.map((t) => t.name).sort()).toEqual(['marketsharp_appointments_list', 'marketsharp_contacts_list', 'marketsharp_inquiries_list']);

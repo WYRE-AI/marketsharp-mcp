@@ -90,7 +90,9 @@ when unset) limits the Host headers `/mcp` accepts. Every response sets
   by mistake.
 - Tool tiers: `read` is the only tier. Conduit's `X-Conduit-Tool-Tiers`
   header can only narrow that set for one request. A present but empty header
-  means no tools at all.
+  means no tools at all. Unlike the fleet template there is deliberately no
+  `MARKETSHARP_TOOL_TIERS` variable: with one tier there is nothing to choose,
+  and nothing in the environment can change the tier set.
 - Every request goes to the fixed host `https://restapi.marketsharpm.com` at
   exactly the path that was built. Ids in paths are percent-encoded, and `.`,
   `..`, `/`, `\`, encoded separators and control characters are rejected

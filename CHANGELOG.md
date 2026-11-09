@@ -14,7 +14,9 @@ their notes are also on [GitHub Releases](https://github.com/WYRE-AI/marketsharp
 - MCP server for the MarketSharp CRM REST API v2.0 (WYREAI-526): 25 read-only
   tools. Stdio and stateless streamable HTTP (Conduit gateway) transports.
 - `X-Conduit-Tool-Tiers` support. `read` is the only tier and the header can
-  only narrow it. A present but empty header exposes no tools.
+  only narrow it. A present but empty header exposes no tools. There is
+  deliberately no `MARKETSHARP_TOOL_TIERS` variable (the fleet template's
+  `<VENDOR>_TOOL_TIERS`): with one tier there is nothing to configure.
 - Redaction of the API key and secret in use, bearer tokens and JWTs in tool
   output, tool errors and every log line. MarketSharp responses and error text
   are also redacted of the current access token and of values under
@@ -83,6 +85,11 @@ their notes are also on [GitHub Releases](https://github.com/WYRE-AI/marketsharp
 
 ### Fixed
 
+- Tool descriptions no longer state MarketSharp defaults the spec doesn't
+  document (`numberOfRecords` on the searches, `rowsPerPage` on the contact
+  and appointment filters). `marketsharp_opportunities_list` says it can't
+  page past `numberOfRecords`, and `marketsharp_inquiry_notes_list` says it
+  needs an Employee ID with the View Opportunity Note permission.
 - An ASP.NET model-binding 400 now names the first `ModelState` field error
   (redacted and truncated like other vendor text) instead of only "The
   request is invalid.".

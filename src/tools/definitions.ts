@@ -39,7 +39,7 @@ const searchProps = {
   city: s('City.'),
   state: s('State, e.g. MI.'),
   zip: s('ZIP code.'),
-  numberOfRecords: i('Most records to return. MarketSharp defaults to 100.', 1, 500),
+  numberOfRecords: i('Most records to return.', 1, 500),
 };
 const SEARCH_KEYS = Object.keys(searchProps).filter((k) => k !== 'numberOfRecords');
 
@@ -56,7 +56,7 @@ function searchBody(args: Args, extraKeys: string[] = []): Record<string, unknow
 
 const pagingProps = {
   pageNumber: i('Page to return, starting at 1.', 1, 100000),
-  rowsPerPage: i('Rows per page. Keep this small (MarketSharp defaults to 1000). Fewer rows than rowsPerPage means this is the last page.', 1, 1000),
+  rowsPerPage: i('Rows per page (default 100). Fewer rows than rowsPerPage means this is the last page.', 1, 1000),
 };
 const DEFAULT_ROWS = 100;
 
@@ -229,7 +229,8 @@ const TOOL_DEFS: ToolDef[] = [
   {
     name: 'marketsharp_inquiry_notes_list',
     tier: 'read',
-    description: 'List the notes on an inquiry (lead), or on the job created from it.',
+    description:
+      "List the notes on an inquiry (lead), or on the job created from it. Needs an Employee ID on the connection, and that employee needs MarketSharp's View Opportunity Note permission.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -330,7 +331,8 @@ const TOOL_DEFS: ToolDef[] = [
     name: 'marketsharp_opportunities_list',
     tier: 'read',
     description:
-      'List opportunities (jobs and leads) changed since a date, with job numbers, sale and contract dates, contract totals, contract status and balance due.',
+      'List opportunities (jobs and leads) changed since a date, with job numbers, sale and contract dates, contract totals, contract status and balance due. ' +
+      'Returns at most numberOfRecords (max 1000) with no paging; if you get exactly that many, narrow fromDate.',
     inputSchema: {
       type: 'object',
       properties: {
