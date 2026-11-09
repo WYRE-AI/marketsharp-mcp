@@ -637,6 +637,27 @@ describe('HTTP /mcp authentication', () => {
     },
   );
 
+  it.each(['gateway', 'env'] as const)(
+    'AUTH_MODE=%s: aborts the MarketSharp fetch when the gateway client disconnects',
+    async (mode) => {
+      process.env.AUTH_MODE = mode;
+      let upstream: AbortSignal | undefined;
+      fetchMock.mockImplementation(async (url: string, init: RequestInit) => {
+        if (String(url).endsWith('/token')) return jsonResponse({ access_token: 'jwt', expires_in: 3600 });
+        upstream = init.signal ?? undefined;
+        return new Promise((_resolve, reject) => init.signal?.addEventListener('abort', () => reject(init.signal?.reason)));
+      });
+      const server = await listen();
+      const req = httpRequest({ hostname: '127.0.0.1', port: server.port, method: 'POST', path: '/mcp', headers: gatewayHeaders() });
+      req.on('error', () => undefined);
+      req.end(groupsCall);
+      await vi.waitFor(() => expect(upstream).toBeDefined());
+      expect(upstream?.aborted).toBe(false);
+      req.destroy();
+      await vi.waitFor(() => expect(upstream?.aborted).toBe(true));
+    },
+  );
+
   describe('method, Host allowlist and caching', () => {
     it.each(['GET', 'DELETE', 'PUT'])('a signed %s /mcp gets 405 with Allow: POST and never opens a stream', async (method) => {
       const server = await listen();

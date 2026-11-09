@@ -71,3 +71,16 @@ their notes are also on [GitHub Releases](https://github.com/WYRE-AI/marketsharp
   `MARKETSHARP_API_KEY` or `MARKETSHARP_API_SECRET` is empty, or when the
   company or employee id is not a MarketSharp id, instead of reporting healthy
   and failing every tool call.
+- MarketSharp calls stop when the gateway client disconnects: the fetch and
+  any 429 backoff are aborted instead of running on with the tenant's token
+  for up to about a minute. The shared `/token` mint keeps only its timeout.
+- Log lines redact the access tokens used in the current HTTP request by exact
+  match, so an opaque (non-JWT) token is caught too.
+- A full token cache (500 credential sets) drops expired tokens and then the
+  oldest one, instead of clearing every tenant's token at once.
+
+### Fixed
+
+- An ASP.NET model-binding 400 now names the first `ModelState` field error
+  (redacted and truncated like other vendor text) instead of only "The
+  request is invalid.".

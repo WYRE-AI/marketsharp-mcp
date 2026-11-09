@@ -9,9 +9,10 @@
  * - vendor errors keep HTTP status, MarketSharp's message and any request id.
  */
 import { createHash } from 'node:crypto';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { MAX_RESPONSE_CHARS } from './input-limits.js';
 import { redactText, redactValue } from './redact.js';
-import { scopedCredentials } from './scope.js';
+import { callerSignal, rememberToken, scopedCredentials } from './scope.js';
 import { wrapVendorDetail } from './untrusted.js';
 import { logger } from './utils/logger.js';
 import type { MarketSharpCredentials } from './types.js';
@@ -40,7 +41,7 @@ type Secrets = readonly (string | undefined)[];
 /** Response headers that may carry a request id for MarketSharp support (which one MarketSharp sends is undocumented). */
 const REQUEST_ID_HEADERS = ['x-request-id', 'request-id', 'x-correlation-id'];
 export { MAX_RESPONSE_CHARS };
-export { runWithCredentials } from './scope.js';
+export { runInRequestScope, runWithCredentials } from './scope.js';
 
 let gatewayMode = false;
 
@@ -122,9 +123,14 @@ export function clearTokenCache(): void {
   inflight.clear();
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+/** The per-attempt timeout, plus the caller's disconnect when this runs inside an HTTP request. */
+function requestSignal(timeoutMs: number): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  const caller = callerSignal();
+  return caller ? AbortSignal.any([caller, timeout]) : timeout;
 }
+
+const CANCELLED = 'The request was cancelled before MarketSharp answered.';
 
 export function parseRetryAfter(value: string | null): number | undefined {
   if (!value) return undefined;
@@ -148,10 +154,25 @@ export function vendorMessage(text: string): string | undefined {
       body.message,
       typeof body.response === 'string' ? body.response : undefined,
     ];
-    return candidates.find((c) => typeof c === 'string' && c.trim().length > 0) as string | undefined;
+    const message = candidates.find((c) => typeof c === 'string' && c.trim().length > 0) as string | undefined;
+    return message === undefined ? undefined : `${message}${modelStateDetail(body.ModelState)}`;
   } catch {
     return undefined;
   }
+}
+
+/**
+ * ASP.NET model-binding 400s say only "The request is invalid." and put the
+ * reason in ModelState ({ "model.field": ["error", ...] }). Returns the first
+ * field and error as " field: error", or "". The caller redacts and truncates.
+ */
+function modelStateDetail(modelState: unknown): string {
+  if (!modelState || typeof modelState !== 'object') return '';
+  for (const [field, errors] of Object.entries(modelState as Record<string, unknown>)) {
+    const first = Array.isArray(errors) ? errors.find((e) => typeof e === 'string' && e.trim()) : undefined;
+    if (first) return ` ${field}: ${first.trim()}`;
+  }
+  return '';
 }
 
 /**
@@ -235,6 +256,7 @@ async function mintToken(c: MarketSharpCredentials): Promise<string> {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
       body: form.toString(),
       redirect: 'manual',
+      // Not the caller's signal: concurrent callers share this mint (inflight).
       signal: AbortSignal.timeout(TOKEN_TIMEOUT_MS),
     });
   } catch (err) {
@@ -285,9 +307,22 @@ async function mintToken(c: MarketSharpCredentials): Promise<string> {
   }
   const ttl = typeof expiresIn === 'number' && expiresIn > 0 ? expiresIn : Number(expiresIn) > 0 ? Number(expiresIn) : DEFAULT_TOKEN_TTL_S;
   const key = credentialCacheKey(c);
-  if (tokenCache.size >= MAX_CACHED_TOKENS) tokenCache.clear();
+  tokenCache.delete(key);
+  makeRoomInTokenCache();
   tokenCache.set(key, { token, expiresAt: Date.now() + Math.max(30, ttl - TOKEN_SKEW_S) * 1000 });
   return token;
+}
+
+/**
+ * Full cache: drop expired tokens, then the oldest (Map keeps mint order),
+ * so one busy period never makes every tenant re-mint at once.
+ */
+function makeRoomInTokenCache(): void {
+  if (tokenCache.size < MAX_CACHED_TOKENS) return;
+  const now = Date.now();
+  for (const [key, cached] of tokenCache) if (cached.expiresAt <= now) tokenCache.delete(key);
+  const oldest = tokenCache.keys().next();
+  if (tokenCache.size >= MAX_CACHED_TOKENS && !oldest.done) tokenCache.delete(oldest.value);
 }
 
 export async function getToken(c: MarketSharpCredentials, forceRefresh = false): Promise<string> {
@@ -390,14 +425,17 @@ export async function marketsharpRequest(creds: MarketSharpCredentials | null, r
   let refreshed = false;
 
   for (let attempt = 0; ; attempt++) {
+    if (callerSignal()?.aborted) throw new MarketSharpApiError(CANCELLED);
     const token = await getToken(creds, false);
+    rememberToken(token);
     const secrets: Secrets = [creds.apiKey, creds.apiSecret, token];
     const headers: Record<string, string> = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     let res: Response;
     try {
-      res = await fetch(url, { method: req.method, headers, body, redirect: 'manual', signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+      res = await fetch(url, { method: req.method, headers, body, redirect: 'manual', signal: requestSignal(REQUEST_TIMEOUT_MS) });
     } catch (err) {
+      if (callerSignal()?.aborted) throw new MarketSharpApiError(CANCELLED);
       logFetchFailure('MarketSharp request failed', req.method, err);
       const timedOut = (err as Error).name === 'TimeoutError';
       throw new MarketSharpApiError(
@@ -419,7 +457,9 @@ export async function marketsharpRequest(creds: MarketSharpCredentials | null, r
     if (retryable && attempt < MAX_RETRIES) {
       await res.body?.cancel().catch(() => undefined);
       const wait = parseRetryAfter(res.headers.get('retry-after')) ?? 1000 * 2 ** attempt;
-      await sleep(Math.min(wait, MAX_BACKOFF_MS));
+      await sleep(Math.min(wait, MAX_BACKOFF_MS), undefined, { signal: callerSignal() }).catch(() => {
+        throw new MarketSharpApiError(CANCELLED);
+      });
       continue;
     }
     if (!res.ok) throw await vendorError(res, secrets);

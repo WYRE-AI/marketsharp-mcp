@@ -6,7 +6,8 @@ import {
 } from 'node:http';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { createServer } from './server.js';
-import { runWithCredentials, setGatewayMode } from './client.js';
+import { setGatewayMode } from './client.js';
+import { runInRequestScope } from './scope.js';
 import { configuredTiers, narrowTiers, TOOL_TIERS_HEADER } from './config.js';
 import { logger } from './utils/logger.js';
 import { MAX_REQUEST_BODY_BYTES } from './input-limits.js';
@@ -286,11 +287,16 @@ export async function startHttpServer(): Promise<HttpServer> {
       return;
     }
 
+    // Aborted when the gateway client goes away (and, harmlessly, after a
+    // normal response), so upstream fetches and 429 backoffs stop with it.
+    const caller = new AbortController();
+    res.on('close', () => caller.abort());
+
     const handle = async () => {
       // SECURITY-CRITICAL invariant: this transport MUST stay stateless
       // (sessionIdGenerator: undefined + enableJsonResponse: true).
       // Per-request tenant credentials are carried in an AsyncLocalStorage
-      // context opened by runWithCredentials() below. A stateless
+      // context opened by runInRequestScope() below. A stateless
       // request->single-response flow keeps the tool call inside that
       // context - switching to a stateful/SSE transport would let a
       // long-lived connection serve later messages under a stale/foreign
@@ -337,13 +343,13 @@ export async function startHttpServer(): Promise<HttpServer> {
         sendJson(res, 400, INVALID_ID_HEADER);
         return;
       }
-      await runWithCredentials({ companyId, apiKey, apiSecret, employeeId }, handle);
+      await runInRequestScope({ creds: { companyId, apiKey, apiSecret, employeeId }, signal: caller.signal }, handle);
       return;
     }
 
     // Env / single-tenant mode: tools resolve MARKETSHARP_* from the process
     // environment. S2S is still enforced when a secret is configured.
-    await handle();
+    await runInRequestScope({ signal: caller.signal }, handle);
   });
 
   await new Promise<void>((resolve, reject) => {

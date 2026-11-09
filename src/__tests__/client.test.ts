@@ -12,6 +12,8 @@ import {
   MAX_RESPONSE_CHARS,
   vendorMessage,
 } from '../client.js';
+import { runInRequestScope } from '../scope.js';
+import { logger } from '../utils/logger.js';
 
 const creds = { companyId: '123', apiKey: 'key-abc', apiSecret: 'sec-xyz' };
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
@@ -226,5 +228,110 @@ describe('client', () => {
   it('extracts vendor messages from the envelope', () => {
     expect(vendorMessage('{"meta":{"message":"ApiKey is required."},"response":"denied"}')).toBe('ApiKey is required.');
     expect(vendorMessage('<html>')).toBeUndefined();
+  });
+});
+
+describe('client hardening', () => {
+  const fetchMock = vi.fn();
+  const GET = { method: 'GET', path: '/companies/123' } as const;
+  beforeEach(() => {
+    clearTokenCache();
+    fetchMock.mockReset();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('aborts the in-flight MarketSharp fetch when the caller goes away', async () => {
+    const caller = new AbortController();
+    let seen: AbortSignal | undefined;
+    fetchMock.mockImplementation(async (url: string, init: RequestInit) => {
+      if (String(url).endsWith('/token')) return json({ access_token: 'tk' });
+      seen = init.signal ?? undefined;
+      return new Promise((_resolve, reject) => init.signal?.addEventListener('abort', () => reject(init.signal?.reason)));
+    });
+    const pending = runInRequestScope({ creds, signal: caller.signal }, () => marketsharpRequest(creds, GET));
+    await vi.waitFor(() => expect(seen).toBeDefined());
+    caller.abort();
+    await expect(pending).rejects.toThrow('cancelled');
+    expect(seen?.aborted).toBe(true);
+  });
+
+  it('stops a 429 backoff when the caller goes away and sends nothing more', async () => {
+    const caller = new AbortController();
+    fetchMock.mockImplementation(async (url: string) =>
+      String(url).endsWith('/token') ? json({ access_token: 'tk' }) : json({}, 429, { 'retry-after': '10' }),
+    );
+    const started = Date.now();
+    const pending = runInRequestScope({ signal: caller.signal }, () => marketsharpRequest(creds, GET));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    caller.abort();
+    await expect(pending).rejects.toThrow('cancelled');
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('redacts an opaque (non-JWT) access token from log lines by exact match', async () => {
+    const opaque = 'opaqueTokenValue0123456789';
+    fetchMock.mockImplementation(async (url: string) =>
+      String(url).endsWith('/token') ? json({ access_token: opaque }) : json({ ok: 1 }),
+    );
+    const lines: string[] = [];
+    vi.spyOn(console, 'error').mockImplementation((line: unknown) => {
+      lines.push(String(line));
+    });
+    await runWithCredentials(creds, async () => {
+      await marketsharpRequest(creds, GET);
+      logger.warn(`token was ${opaque}`, { token: opaque });
+    });
+    expect(lines.join('\n')).not.toContain(opaque);
+    expect(lines.join('\n')).toContain('[REDACTED]');
+  });
+
+  const tenant = (i: number) => ({ ...creds, companyId: String(i) });
+
+  it('when the token cache is full, evicts only the oldest token instead of every tenant', async () => {
+    let n = 0;
+    fetchMock.mockImplementation(async () => json({ access_token: `t${n++}`, expires_in: 3600 }));
+    for (let i = 0; i <= 500; i++) await getToken(tenant(i));
+    expect(fetchMock).toHaveBeenCalledTimes(501);
+    await getToken(tenant(1));
+    await getToken(tenant(500));
+    expect(fetchMock).toHaveBeenCalledTimes(501);
+    await getToken(tenant(0));
+    expect(fetchMock).toHaveBeenCalledTimes(502);
+  });
+
+  it('when the token cache is full, evicts expired tokens before live ones', async () => {
+    vi.useFakeTimers();
+    fetchMock.mockImplementation(async (_url: string, init: RequestInit) => {
+      const id = new URLSearchParams(String(init.body)).get('companyId');
+      return json({ access_token: `t${id}`, expires_in: id === '1' ? 120 : 3600 });
+    });
+    for (let i = 0; i < 500; i++) await getToken(tenant(i));
+    vi.advanceTimersByTime(61_000);
+    await getToken(tenant(500));
+    expect(fetchMock).toHaveBeenCalledTimes(501);
+    // tenant 0 (oldest, still live) survives; tenant 1 (expired) was the one dropped.
+    await getToken(tenant(0));
+    expect(fetchMock).toHaveBeenCalledTimes(501);
+  });
+
+  it('names the first ModelState field error on an ASP.NET 400', async () => {
+    const body = {
+      Message: 'The request is invalid.',
+      ModelState: { 'model.start_modified_datetime': [`The value 'x${creds.apiSecret}' is not valid for start_modified_datetime.`] },
+    };
+    expect(vendorMessage(JSON.stringify(body))).toBe(
+      `The request is invalid. model.start_modified_datetime: The value 'x${creds.apiSecret}' is not valid for start_modified_datetime.`,
+    );
+    fetchMock.mockResolvedValueOnce(json({ access_token: 'tk' })).mockResolvedValueOnce(json(body, 400));
+    const err = await marketsharpRequest(creds, { method: 'POST', path: '/companies/123/contacts/filter', body: {} }).catch((e) => e);
+    expect(err.message).toContain('HTTP 400');
+    expect(err.message).toContain('model.start_modified_datetime');
+    expect(err.message).not.toContain(creds.apiSecret);
   });
 });
