@@ -1,0 +1,16 @@
+name: a path-traversal ID is rejected before any upstream call
+server:
+  command: node
+  args: [dist/index.js]
+  env:
+    MARKETSHARP_COMPANY_ID: "123"
+    MARKETSHARP_API_KEY: eval-key-not-real-0000
+    MARKETSHARP_API_SECRET: eval-secret-not-real-0000
+assert:
+  tool: marketsharp_contacts_get
+  args:
+    contactId: "../token"
+  expect:
+    is_error: true
+    contains: ["contactId"]
+timeout: 30s

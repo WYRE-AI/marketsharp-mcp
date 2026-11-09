@@ -1,5 +1,5 @@
-# Multi-stage build for efficient container size
-FROM node:22-alpine AS builder
+# node:22-alpine, pinned by manifest-list digest (security review F8). Bump deliberately.
+FROM node:22-alpine@sha256:0e1754758c2df4cfa3e68d59e2e1b7374bb7fd9ea6328eaaacf15cc934af8202 AS builder
 
 ARG VERSION="unknown"
 ARG COMMIT_SHA="unknown"
@@ -10,7 +10,8 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --ignore-scripts
 
-COPY . .
+COPY tsconfig.json tsup.config.ts ./
+COPY src ./src
 
 # Stamp the release VERSION (the reusable release pipeline passes it as a build
 # arg) into package.json before the build, the same way autotask-mcp does.
@@ -27,7 +28,7 @@ RUN if [ "${VERSION}" != "unknown" ] && [ -n "${VERSION}" ]; then \
 RUN npm run build
 RUN npm prune --omit=dev
 
-FROM node:22-alpine AS production
+FROM node:22-alpine@sha256:0e1754758c2df4cfa3e68d59e2e1b7374bb7fd9ea6328eaaacf15cc934af8202 AS production
 
 RUN apk -U upgrade --no-cache
 

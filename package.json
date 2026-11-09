@@ -21,8 +21,11 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "lint": "tsc --noEmit",
-    "clean": "rm -rf dist"
+    "lint": "eslint . && node scripts/lint-destructive-warnings.mjs src",
+    "clean": "rm -rf dist",
+    "lint:destructive": "node scripts/lint-destructive-warnings.mjs src",
+    "typecheck": "tsc --noEmit",
+    "smoke": "node scripts/smoke-stdio.mjs"
   },
   "keywords": [
     "marketsharp",
@@ -38,14 +41,18 @@
     "@modelcontextprotocol/sdk": "^1.32.1"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "@semantic-release/changelog": "^7.0.0",
     "@semantic-release/github": "^12.0.8",
     "@semantic-release/npm": "^13.0.0",
     "@types/node": "^22.10.0",
     "@vitest/coverage-v8": "^2.1.8",
+    "eslint": "^9.39.5",
+    "globals": "^17.14.0",
     "semantic-release": "^25.0.9",
     "tsup": "^8.0.0",
     "typescript": "^6.0.3",
+    "typescript-eslint": "^8.72.2",
     "vitest": "^2.1.8"
   },
   "engines": {

@@ -1,29 +1,31 @@
-# Release is manual-only until the first publish is approved.
 name: Release
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
 
-# Thin caller for the canonical reusable release pipeline. The build ->
-# semantic-release -> Docker -> MCP Registry -> security chain lives in
-# WYRE-AI/reusable-workflows so every *-mcp repo stays in lockstep instead
-# of drifting per-repo. PR-time lint/test gating is test.yml's concern; this
-# workflow only runs the release path.
-# No default token scopes; the release job grants exactly what the reusable
-# pipeline needs below.
-permissions: {}
-
+# Thin caller for the canonical reusable release pipeline (build ->
+# semantic-release -> Docker -> MCP Registry -> security). On pull_request
+# only its unconditional verify job runs; publishing is push-to-main only.
+# This replaces the workflow_dispatch-only trigger (security review F7: a
+# manual dispatch published nothing).
 jobs:
   release:
     permissions:
+      actions: read # Security Scan: SARIF upload reads run metadata on a private repo
       contents: write
       issues: write
       pull-requests: write
       packages: write
       id-token: write
       security-events: write
-    uses: WYRE-AI/reusable-workflows/.github/workflows/mcp-server-release.yml@fbc1e9864c3c591f0d76c46b1de750489614fe0b
+    # reusable-workflows#3: private repos skip the public MCP Registry publish
+    # and the SARIF upload (Code Security is off); Trivy still gates the job.
+    uses: WYRE-AI/reusable-workflows/.github/workflows/mcp-server-release.yml@508ef4ddcd19285d108423a27f44078a15451575
     with:
       server-name: marketsharp-mcp
       image-name: ghcr.io/wyre-ai/marketsharp-mcp
+      fail-on-severity: HIGH,CRITICAL
     secrets: inherit

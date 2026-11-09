@@ -1,0 +1,14 @@
+title = "marketsharp-mcp gitleaks config"
+
+[extend]
+useDefault = true
+
+# Exact fake values used by the test suite (src/__tests__). Each entry is
+# anchored to the full value; do not widen these to patterns or paths.
+[[allowlists]]
+description = "Exact test fixtures"
+regexTarget = "secret"
+regexes = [
+  '''^eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiJ0ZXN0LW5vdC1yZWFsIn0\.c2lnbmF0dXJlLW5vdC1yZWFs$''',
+  '''^Zq8vN2kLw5Rt1Yx7Hc4Mb9Pd3Gf6Js0A$''',
+]

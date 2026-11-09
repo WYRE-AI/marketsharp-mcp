@@ -1,0 +1,22 @@
+name: mcp-assert
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  assert:
+    permissions:
+      contents: read
+      packages: read
+    uses: wyre-technology/.github/.github/workflows/mcp-assert.yml@06856d54d8829929e387523e6c1767d54416e978 # main
+    with:
+      entry: dist/index.js
+      canary-tool: marketsharp_companies_list
+      extra-suite: evals
