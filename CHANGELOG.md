@@ -127,3 +127,11 @@ their notes are also on [GitHub Releases](https://github.com/WYRE-AI/marketsharp
 - An ASP.NET model-binding 400 now names the first `ModelState` field error
   (redacted and truncated like other vendor text) instead of only "The
   request is invalid.".
+- JWT redaction is a single linear pass instead of a regex that was quadratic
+  on input such as `-eyJ` repeated (100 KB took about 3 s; 4 MB now takes
+  milliseconds). It no longer needs a word boundary, so a JWT glued to other
+  text or to another JWT is fully redacted. A test checks that nothing the
+  old regex matched survives, and that redaction time grows linearly.
+- The `server.json` OCI package now defaults `MCP_TRANSPORT` to `stdio` and
+  `AUTH_MODE` to `env`, matching its declared stdio transport, so a registry
+  install no longer starts the HTTP gateway listener without credentials.

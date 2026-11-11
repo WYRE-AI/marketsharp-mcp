@@ -637,6 +637,18 @@ describe('HTTP /mcp authentication', () => {
     },
   );
 
+  it.each(['//h:99999/', '//[/', '//a b/'])(
+    'answers 400 and stays up when the request target is not a valid URL (%s)',
+    async (target) => {
+      const server = await listen();
+      const bad = await sendRaw(server.port, `GET ${target} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n`);
+      expect(bad).toMatch(/^HTTP\/1\.1 400 /);
+      const again = await sendHttp({ port: server.port, method: 'GET', path: '/health' });
+      expect(again.status).toBe(200);
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(['gateway', 'env'] as const)(
     'AUTH_MODE=%s: aborts the MarketSharp fetch when the gateway client disconnects',
     async (mode) => {
