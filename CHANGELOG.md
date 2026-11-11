@@ -95,6 +95,21 @@ their notes are also on [GitHub Releases](https://github.com/WYRE-AI/marketsharp
   match, so an opaque (non-JWT) token is caught too.
 - A full token cache (500 credential sets) drops expired tokens and then the
   oldest one, instead of clearing every tenant's token at once.
+- Request paths are matched with the same id shape the tools accept (1-64
+  letters, digits or dashes) instead of any non-`/` text, so the read-only
+  allowlist no longer passes a path with a newline, `?`, `#`, `..` or `%2F`.
+- A tool call that fails with anything other than a MarketSharp error returns
+  only "Unexpected internal error". The error's name and code are logged, never
+  its message.
+- A sign-in that MarketSharp refuses with 400, 401 or 403 is remembered for 45
+  seconds per credential set and re-thrown without a `/token` call. Network
+  errors, 429 and 5xx are not remembered.
+- The `MCP_ALLOWED_HOSTS` check compares the parsed hostname, so an IPv6 Host
+  with a port (`[::1]:8080`) matches `[::1]`. A malformed Host is a 403. Ports
+  in `MCP_ALLOWED_HOSTS` entries are ignored.
+- One request has at most 4 MarketSharp calls in flight, so a JSON-RPC batch
+  of tool calls can't fan out into one upstream call per message. Waiting
+  calls stop when the gateway client disconnects.
 
 ### Fixed
 

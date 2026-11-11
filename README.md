@@ -149,6 +149,18 @@ See `.env.example`. The image's health check probes `/health` only when
 - Not covered: calendar, texting, email, PaySimple, QuickBooks, CompanyCam,
   automation rules, analytics, estimates (v1 only), and all admin/config writes.
 
+## Security notes
+
+- `companyId` and `employeeId` are identifiers, not secrets. The companies
+  tools return them by design.
+- `MCP_ALLOWED_HOSTS` is opt-in defence in depth behind S2S, not an auth
+  control. It matches the Host header's hostname and ignores the port.
+- The S2S signature covers only the timestamp, the same as the gateway's
+  verifier. Recipient binding comes from the per-vendor subkey.
+- `MCP_ALLOW_INSECURE_DEV` must never be set in a deployment.
+- A request runs at most 4 MarketSharp calls at a time, so a large JSON-RPC
+  batch queues instead of fanning out.
+
 ## Development
 
 ```bash

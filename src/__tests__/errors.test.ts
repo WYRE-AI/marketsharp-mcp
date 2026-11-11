@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearTokenCache, getToken, marketsharpRequest, runWithCredentials } from '../client.js';
 import { dispatchToolCall } from '../tools/index.js';
+import { logger } from '../utils/logger.js';
 import { unwrapVendorDetail } from './unwrap.js';
 
 const creds = { companyId: '123', apiKey: 'k', apiSecret: 's', employeeId: '9' };
@@ -119,6 +120,23 @@ describe('error copy', () => {
   it('says a token 5xx is MarketSharp-side and to try again', async () => {
     fetchMock.mockResolvedValueOnce(json({}, 502));
     await expect(getToken(creds)).rejects.toThrow("sign-in failed on MarketSharp's side (HTTP 502). Try again in a few minutes.");
+  });
+});
+
+describe('unexpected errors', () => {
+  it('a non-MarketSharp error returns only a generic message and logs its name, never its message', async () => {
+    const leaky = 'Bearer sk-live-0123456789abcdef and internal host 10.1.2.3';
+    vendorReplies(() => {
+      // A body whose reader throws a TypeError: not a MarketSharp error.
+      return { status: 200, ok: true, type: 'basic', headers: new Headers(), body: { getReader: () => { throw new TypeError(leaky); } } } as unknown as Response;
+    });
+    const logged = vi.spyOn(logger, 'error').mockImplementation(() => undefined);
+    const result = await runWithCredentials(creds, () => dispatchToolCall(READ, {}, {} as NodeJS.ProcessEnv));
+    expect(result.isError).toBe(true);
+    expect(result.content).toEqual([{ type: 'text', text: 'Error: Unexpected internal error' }]);
+    expect(JSON.stringify(logged.mock.calls)).toContain('TypeError');
+    expect(JSON.stringify(logged.mock.calls)).not.toContain('sk-live');
+    logged.mockRestore();
   });
 });
 

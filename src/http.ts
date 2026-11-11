@@ -93,22 +93,35 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
-/** MCP_ALLOWED_HOSTS: comma-separated Host values /mcp accepts. Unset or empty turns the check off. */
+/**
+ * The lowercase hostname of a Host value ("[::1]:8080" gives "[::1]"), or
+ * undefined when it isn't a bare host with an optional port.
+ */
+function hostnameOf(host: string): string | undefined {
+  try {
+    const u = new URL(`http://${host}`);
+    if (u.username || u.password || u.pathname !== '/' || u.search || u.hash) return undefined;
+    return u.hostname.toLowerCase();
+  } catch {
+    return undefined;
+  }
+}
+
+/** MCP_ALLOWED_HOSTS: comma-separated hostnames /mcp accepts (a port is ignored). Unset or empty turns the check off. */
 function parseAllowedHosts(raw: string | undefined): ReadonlySet<string> | null {
   const entries = (raw ?? '')
     .split(',')
     .map((h) => h.trim().toLowerCase())
-    .filter(Boolean);
+    .filter(Boolean)
+    .map((h) => hostnameOf(h) ?? h);
   return entries.length ? new Set(entries) : null;
 }
 
-/** Matches the Host header as sent, or without its port. */
+/** Matches the hostname of the Host header, whatever its port. A missing or malformed Host never matches. */
 function hostAllowed(req: IncomingMessage, allowed: ReadonlySet<string> | null): boolean {
   if (!allowed) return true;
-  const host = (req.headers.host ?? '').trim().toLowerCase();
-  if (!host) return false;
-  if (allowed.has(host)) return true;
-  return allowed.has(host.replace(/^\[([^\]]+)\](:\d+)?$/, '$1').replace(/:\d+$/, ''));
+  const hostname = hostnameOf((req.headers.host ?? '').trim());
+  return hostname !== undefined && allowed.has(hostname);
 }
 
 function isLoopbackHost(host: string): boolean {

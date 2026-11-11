@@ -5,6 +5,7 @@ import {
   setGatewayMode,
   runWithCredentials,
   getToken,
+  isReadOnlyRequest,
   marketsharpRequest,
   MarketSharpAuthError,
   MarketSharpForbiddenError,
@@ -12,7 +13,7 @@ import {
   MAX_RESPONSE_CHARS,
   vendorMessage,
 } from '../client.js';
-import { runInRequestScope } from '../scope.js';
+import { MAX_CONCURRENT_UPSTREAM, runInRequestScope } from '../scope.js';
 import { logger } from '../utils/logger.js';
 
 const creds = { companyId: '123', apiKey: 'key-abc', apiSecret: 'sec-xyz' };
@@ -214,8 +215,7 @@ describe('client', () => {
   });
 
   it('refuses traversal in paths and missing credentials', async () => {
-    // '/companies/..' matches the /companies/{id} route, so this reaches buildUrl's own check.
-    await expect(marketsharpRequest(creds, { method: 'GET', path: '/companies/..' })).rejects.toThrow('Invalid MarketSharp path');
+    await expect(marketsharpRequest(creds, { method: 'GET', path: '/companies/..' })).rejects.toThrow('read-only');
     await expect(marketsharpRequest(creds, { method: 'GET', path: '/companies/../x' })).rejects.toThrow('read-only');
     await expect(marketsharpRequest(null, { method: 'GET', path: '/companies' })).rejects.toThrow('not configured');
     expect(fetchMock).not.toHaveBeenCalled();
@@ -335,5 +335,151 @@ describe('client hardening', () => {
     expect(err.message).toContain('HTTP 400');
     expect(err.message).toContain('model.start_modified_datetime');
     expect(err.message).not.toContain(creds.apiSecret);
+  });
+});
+
+describe('read-only route allowlist', () => {
+  it.each([
+    '/companies/123/contacts/2\n',
+    '/companies/1/contacts/2\n',
+    '/companies/1/contacts/2?x=1',
+    '/companies/1/contacts/2#frag',
+    '/companies/1/contacts/..',
+    '/companies/../contacts/2',
+    '/companies/1/contacts/%2F',
+    '/companies/1%2Fcontacts/2',
+    '/companies/1/contacts/a b',
+    `/companies/1/contacts/${'x'.repeat(65)}`,
+  ])('isReadOnlyRequest rejects the malformed path %j', (path) => {
+    expect(isReadOnlyRequest({ method: 'GET', path })).toBe(false);
+  });
+
+  it('isReadOnlyRequest still accepts numeric and GUID ids', () => {
+    const guid = '3f2504e0-4f89-11d3-9a0c-0305e82c3301';
+    expect(isReadOnlyRequest({ method: 'GET', path: `/companies/123/contacts/${guid}` })).toBe(true);
+    expect(isReadOnlyRequest({ method: 'GET', path: `/companies/${'1'.repeat(64)}` })).toBe(true);
+    expect(isReadOnlyRequest({ method: 'POST', path: '/companies/123/contacts/search' })).toBe(true);
+  });
+});
+
+describe('failed sign-ins are cached briefly', () => {
+  const fetchMock = vi.fn();
+  const tokenCalls = () => fetchMock.mock.calls.filter(([url]) => String(url).endsWith('/token')).length;
+  beforeEach(() => {
+    clearTokenCache();
+    fetchMock.mockReset();
+    vi.stubGlobal('fetch', fetchMock);
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it.each([400, 401, 403])('a %i from /token is re-thrown for 45 s without another request, then retried', async (status) => {
+    fetchMock.mockImplementation(async () => json({ error: 'invalid_client' }, status));
+    const first = await getToken(creds).catch((e) => e);
+    expect(first).toBeInstanceOf(MarketSharpAuthError);
+    const second = await marketsharpRequest(creds, { method: 'GET', path: '/companies/123/divisions' }).catch((e) => e);
+    expect(second).toBe(first);
+    expect(tokenCalls()).toBe(1);
+
+    vi.advanceTimersByTime(44_000);
+    await expect(getToken(creds)).rejects.toBe(first);
+    expect(tokenCalls()).toBe(1);
+
+    vi.advanceTimersByTime(2_000);
+    await expect(getToken(creds)).rejects.toBeInstanceOf(MarketSharpAuthError);
+    expect(tokenCalls()).toBe(2);
+  });
+
+  it('is per credential set: other credentials still sign in', async () => {
+    fetchMock.mockImplementation(async (_url: string, init: RequestInit) =>
+      new URLSearchParams(String(init.body)).get('apikey') === 'bad' ? json({}, 401) : json({ access_token: 'tk' }),
+    );
+    await expect(getToken({ ...creds, apiKey: 'bad' })).rejects.toBeInstanceOf(MarketSharpAuthError);
+    expect(await getToken(creds)).toBe('tk');
+  });
+
+  it.each([429, 500, 503])('a %i from /token is not cached', async (status) => {
+    fetchMock.mockImplementation(async () => json({}, status));
+    await expect(getToken(creds)).rejects.toThrow();
+    await expect(getToken(creds)).rejects.toThrow();
+    expect(tokenCalls()).toBe(2);
+  });
+
+  it('a network error from /token is not cached', async () => {
+    fetchMock.mockRejectedValue(new Error('ECONNRESET'));
+    await expect(getToken(creds)).rejects.toThrow();
+    await expect(getToken(creds)).rejects.toThrow();
+    expect(tokenCalls()).toBe(2);
+  });
+
+  it('a successful sign-in replaces a cached failure once it is retried', async () => {
+    fetchMock.mockResolvedValueOnce(json({}, 401));
+    await expect(getToken(creds)).rejects.toBeInstanceOf(MarketSharpAuthError);
+    fetchMock.mockResolvedValueOnce(json({ access_token: 'fixed' }));
+    expect(await getToken(creds, true)).toBe('fixed');
+    expect(await getToken(creds)).toBe('fixed');
+  });
+});
+
+describe('upstream concurrency per request', () => {
+  const fetchMock = vi.fn();
+  beforeEach(() => {
+    clearTokenCache();
+    fetchMock.mockReset();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  const read = (i: number) => marketsharpRequest(creds, { method: 'GET', path: `/companies/123/contacts/${i}` });
+
+  it('a batch of 20 calls never has more than 4 upstream fetches in flight', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    let served = 0;
+    fetchMock.mockImplementation(async (url: string) => {
+      if (String(url).endsWith('/token')) return json({ access_token: 'tk' });
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--;
+      served++;
+      return json({ ok: true });
+    });
+    const results = await runInRequestScope({ creds }, () => Promise.all(Array.from({ length: 20 }, (_, i) => read(i))));
+    expect(results).toHaveLength(20);
+    expect(served).toBe(20);
+    expect(peak).toBe(MAX_CONCURRENT_UPSTREAM);
+    expect(MAX_CONCURRENT_UPSTREAM).toBe(4);
+  });
+
+  it('a failing call frees its slot', async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (String(url).endsWith('/token')) return json({ access_token: 'tk' });
+      throw new Error('boom');
+    });
+    const results = await runInRequestScope({ creds }, () => Promise.allSettled(Array.from({ length: 10 }, (_, i) => read(i))));
+    expect(results.every((r) => r.status === 'rejected')).toBe(true);
+    expect(fetchMock.mock.calls.filter(([u]) => !String(u).endsWith('/token'))).toHaveLength(10);
+  });
+
+  it('aborting the request releases the calls waiting for a slot', async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (String(url).endsWith('/token')) return json({ access_token: 'tk' });
+      return new Promise<Response>(() => {}); // an upstream call that never answers
+    });
+    const abort = new AbortController();
+    const calls = runInRequestScope({ creds, signal: abort.signal }, () =>
+      Array.from({ length: 8 }, (_, i) => read(i).catch((e) => e as Error)),
+    );
+    await vi.waitFor(() => expect(fetchMock.mock.calls.filter(([u]) => !String(u).endsWith('/token'))).toHaveLength(4));
+    abort.abort();
+    // The four waiting calls end at once. The four running ones are cancelled by their own fetch signal in real life.
+    const settled = await Promise.race([Promise.all(calls.slice(4)), new Promise((r) => setTimeout(() => r('hung'), 1000))]);
+    expect(settled).not.toBe('hung');
+    for (const e of settled as Error[]) expect(e.message).toContain('cancelled');
+    expect(fetchMock.mock.calls.filter(([u]) => !String(u).endsWith('/token'))).toHaveLength(4);
   });
 });

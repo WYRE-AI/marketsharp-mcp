@@ -12,7 +12,7 @@ import { createHash } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { MAX_RESPONSE_CHARS } from './input-limits.js';
 import { redactText, redactValue } from './redact.js';
-import { callerSignal, rememberToken, scopedCredentials } from './scope.js';
+import { callerSignal, rememberToken, scopedCredentials, withUpstreamSlot } from './scope.js';
 import { wrapVendorDetail } from './untrusted.js';
 import { logger } from './utils/logger.js';
 import type { MarketSharpCredentials } from './types.js';
@@ -89,10 +89,12 @@ export function getCredentials(env: NodeJS.ProcessEnv = process.env): MarketShar
 // Errors. Messages never include credential values or the bearer token; the
 // dispatcher also redacts them as a second line of defence.
 // ---------------------------------------------------------------------------
-export class MarketSharpAuthError extends Error {}
-export class MarketSharpForbiddenError extends Error {}
-export class MarketSharpRateLimitError extends Error {}
-export class MarketSharpApiError extends Error {
+/** Base of every error whose message is written to be safe to show the model. Anything else is reported generically. */
+export class MarketSharpError extends Error {}
+export class MarketSharpAuthError extends MarketSharpError {}
+export class MarketSharpForbiddenError extends MarketSharpError {}
+export class MarketSharpRateLimitError extends MarketSharpError {}
+export class MarketSharpApiError extends MarketSharpError {
   constructor(message: string, readonly status?: number, readonly requestId?: string) {
     super(message);
   }
@@ -101,14 +103,16 @@ export class MarketSharpApiError extends Error {
 // ---------------------------------------------------------------------------
 // Token cache, keyed by a hash of the full credential set so two tenants (or
 // a rotated secret) never share a token and the key itself reveals nothing.
+// A sign-in refused with 400/401/403 is remembered briefly under the same key,
+// so a tenant with a wrong or revoked key doesn't make a /token call per tool
+// call. It lives in the same map, so the same cap bounds both.
 // ---------------------------------------------------------------------------
-interface CachedToken {
-  token: string;
-  expiresAt: number;
-}
+type CachedToken = { expiresAt: number } & ({ token: string } | { error: MarketSharpAuthError });
 const tokenCache = new Map<string, CachedToken>();
 const inflight = new Map<string, Promise<string>>();
 const MAX_CACHED_TOKENS = 500;
+/** How long a rejected sign-in is remembered. Short, so a corrected key works again quickly. */
+const FAILED_MINT_TTL_MS = 45_000;
 
 export function credentialCacheKey(c: MarketSharpCredentials): string {
   return createHash('sha256')
@@ -268,11 +272,13 @@ async function mintToken(c: MarketSharpCredentials): Promise<string> {
   const text = await readBoundedText(res, MAX_SMALL_BODY_BYTES).catch(() => '');
   if (!res.ok) {
     if (res.status === 400 || res.status === 401 || res.status === 403) {
-      throw new MarketSharpAuthError(
+      const error = new MarketSharpAuthError(
         `MarketSharp rejected the Company ID, API key or API secret (HTTP ${res.status})` +
           detailSuffix(vendorMessage(text), [c.apiKey, c.apiSecret]) +
           ' Check the key and secret under Admin → Apps & Add-ons Setup → API maintenance in MarketSharp.'
       );
+      cacheEntry(credentialCacheKey(c), { error, expiresAt: Date.now() + FAILED_MINT_TTL_MS });
+      throw error;
     }
     throw new MarketSharpApiError(`MarketSharp sign-in failed on MarketSharp's side (HTTP ${res.status}). Try again in a few minutes.`, res.status);
   }
@@ -305,11 +311,14 @@ async function mintToken(c: MarketSharpCredentials): Promise<string> {
     throw new MarketSharpApiError("MarketSharp's sign-in response didn't include an access token.", res.status);
   }
   const ttl = typeof expiresIn === 'number' && expiresIn > 0 ? expiresIn : Number(expiresIn) > 0 ? Number(expiresIn) : DEFAULT_TOKEN_TTL_S;
-  const key = credentialCacheKey(c);
+  cacheEntry(credentialCacheKey(c), { token, expiresAt: Date.now() + Math.max(30, ttl - TOKEN_SKEW_S) * 1000 });
+  return token;
+}
+
+function cacheEntry(key: string, entry: CachedToken): void {
   tokenCache.delete(key);
   makeRoomInTokenCache();
-  tokenCache.set(key, { token, expiresAt: Date.now() + Math.max(30, ttl - TOKEN_SKEW_S) * 1000 });
-  return token;
+  tokenCache.set(key, entry);
 }
 
 /**
@@ -328,7 +337,10 @@ export async function getToken(c: MarketSharpCredentials, forceRefresh = false):
   const key = credentialCacheKey(c);
   if (!forceRefresh) {
     const hit = tokenCache.get(key);
-    if (hit && hit.expiresAt > Date.now()) return hit.token;
+    if (hit && hit.expiresAt > Date.now()) {
+      if ('error' in hit) throw hit.error;
+      return hit.token;
+    }
   } else {
     tokenCache.delete(key);
   }
@@ -358,7 +370,11 @@ export interface MarketSharpRequest {
   paging?: Paging;
 }
 
-const route = (template: string) => new RegExp(`^${template.replaceAll('{id}', '[^/]+')}$`);
+/** MarketSharp ids are numbers or GUIDs: the same shape http.ts requires of the company and employee ids. */
+const ID_PATTERN = '[A-Za-z0-9-]{1,64}';
+const ID_RE = new RegExp(`^${ID_PATTERN}$`);
+
+const route = (template: string) => new RegExp(`^${template.replaceAll('{id}', ID_PATTERN)}$`);
 
 /**
  * The only routes this server calls ({id} is one path segment). MarketSharp
@@ -415,8 +431,6 @@ function assertReadOnly(req: MarketSharpRequest): void {
   throw new MarketSharpApiError('This server is read-only: that MarketSharp request is not a read, so it was not sent.');
 }
 
-/** MarketSharp ids are numbers or GUIDs: the same shape http.ts requires of the company and employee ids. */
-const ID_RE = /^[A-Za-z0-9-]{1,64}$/;
 
 /**
  * Returns one URL path segment. Only letters, digits and dashes are accepted,
@@ -571,7 +585,10 @@ export async function marketsharpRequest(creds: MarketSharpCredentials | null, r
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     let res: Response;
     try {
-      res = await fetch(url, { method: req.method, headers, body, redirect: 'manual', signal: requestSignal(REQUEST_TIMEOUT_MS) });
+      // At most a few of a request's calls (a JSON-RPC batch) are in flight at once.
+      res = await withUpstreamSlot(() =>
+        fetch(url, { method: req.method, headers, body, redirect: 'manual', signal: requestSignal(REQUEST_TIMEOUT_MS) }),
+      );
     } catch (err) {
       if (callerSignal()?.aborted) throw new MarketSharpApiError(CANCELLED);
       logFetchFailure('MarketSharp request failed', req.method, err);

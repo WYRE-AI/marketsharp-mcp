@@ -722,6 +722,21 @@ describe('HTTP /mcp authentication', () => {
       expect(health.status).toBe(200);
     });
 
+    it('MCP_ALLOWED_HOSTS matches an IPv6 Host with a port, rejects a different host and a malformed one', async () => {
+      process.env.MCP_ALLOWED_HOSTS = '[::1], Sidecar.internal:9000';
+      const server = await listen();
+      const send = (host: string) =>
+        sendHttp({ port: server.port, method: 'POST', path: '/mcp', headers: gatewayHeaders({ host }), body: groupsCall });
+      expect((await send('[::1]:8080')).status).toBe(200);
+      expect((await send('[::1]')).status).toBe(200);
+      expect((await send('SIDECAR.internal:8080')).status).toBe(200);
+      expect((await send('[::2]:8080')).status).toBe(403);
+      expect((await send('evil.example')).status).toBe(403);
+      for (const malformed of ['[::1', 'sidecar.internal:notaport', 'sidecar.internal/path', 'user@sidecar.internal', 'a b']) {
+        expect((await send(malformed)).status, malformed).toBe(403);
+      }
+    });
+
     it('every response carries Cache-Control: no-store', async () => {
       const server = await listen();
       const { ['x-gateway-s2s']: _drop, ...noS2s } = gatewayHeaders();
