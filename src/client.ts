@@ -216,8 +216,12 @@ async function refuseRedirect(res: Response): Promise<never> {
   throw new MarketSharpApiError(`MarketSharp answered with a redirect (HTTP ${res.status}); refusing to follow it.`, res.status);
 }
 
-/** Reads a response body as text, cancelling the stream as soon as it exceeds maxBytes. */
-async function readBoundedText(res: Response, maxBytes: number): Promise<string> {
+/**
+ * Reads a response body as text, cancelling the stream as soon as it exceeds
+ * maxBytes. With a signal, an abort cancels the stream and rejects with the
+ * signal's reason, so a stalled body can't hold its caller forever.
+ */
+async function readBoundedText(res: Response, maxBytes: number, signal?: AbortSignal): Promise<string> {
   const tooLarge = () =>
     new MarketSharpApiError(
       `MarketSharp's response exceeded ${maxBytes} bytes. Narrow the request: use filters, a smaller page size, or fewer records.`,
@@ -231,15 +235,27 @@ async function readBoundedText(res: Response, maxBytes: number): Promise<string>
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > maxBytes) {
-      await reader.cancel().catch(() => undefined);
-      throw tooLarge();
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_, reject) => {
+    if (!signal) return;
+    onAbort = () => reject(signal.reason);
+    if (signal.aborted) onAbort();
+    else signal.addEventListener('abort', onAbort, { once: true });
+  });
+  aborted.catch(() => undefined); // never an unhandled rejection when the read wins
+  try {
+    for (;;) {
+      const { done, value } = await Promise.race([reader.read(), aborted]);
+      if (done) break;
+      size += value.byteLength;
+      if (size > maxBytes) throw tooLarge();
+      chunks.push(value);
     }
-    chunks.push(value);
+  } catch (err) {
+    await reader.cancel().catch(() => undefined);
+    throw err;
+  } finally {
+    if (onAbort) signal?.removeEventListener('abort', onAbort);
   }
   return Buffer.concat(chunks).toString('utf8');
 }
@@ -558,6 +574,9 @@ export function renderBody(text: string, secrets: Secrets = [], paging?: Paging)
   );
 }
 
+/** What one upstream attempt came to: a rendered body, a wait before retrying, or a token refresh to do. */
+type Attempt = { text: string } | { wait: number } | 'refresh';
+
 /**
  * Call MarketSharp with a cached bearer token. A 401 triggers exactly one
  * token refresh and retry; 429 (any method) and 503 (GET only) back off
@@ -583,13 +602,34 @@ export async function marketsharpRequest(creds: MarketSharpCredentials | null, r
     const secrets: Secrets = [creds.apiKey, creds.apiSecret, token];
     const headers: Record<string, string> = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
-    let res: Response;
+
+    // One slot covers the fetch and the whole body read, so a batch of calls in
+    // one request never has more than a few connections or bodies open. A retry's
+    // wait and the token refresh happen after the slot is released.
+    let outcome: Attempt;
     try {
-      // At most a few of a request's calls (a JSON-RPC batch) are in flight at once.
-      res = await withUpstreamSlot(() =>
-        fetch(url, { method: req.method, headers, body, redirect: 'manual', signal: requestSignal(REQUEST_TIMEOUT_MS) }),
-      );
+      outcome = await withUpstreamSlot(async (): Promise<Attempt> => {
+        const signal = requestSignal(REQUEST_TIMEOUT_MS);
+        const res = await fetch(url, { method: req.method, headers, body, redirect: 'manual', signal });
+        if (isRedirect(res)) await refuseRedirect(res);
+        if (res.status === 401 && !refreshed) {
+          await res.body?.cancel().catch(() => undefined);
+          return 'refresh';
+        }
+        // 429 means MarketSharp rejected the request, so any method may retry.
+        // A 503 can come from a proxy after the backend already handled a POST,
+        // and POST is not assumed idempotent, so only GETs retry on 503.
+        const retryable = res.status === 429 || (res.status === 503 && req.method === 'GET');
+        if (retryable && attempt < MAX_RETRIES) {
+          await res.body?.cancel().catch(() => undefined);
+          return { wait: Math.min(parseRetryAfter(res.headers.get('retry-after')) ?? 1000 * 2 ** attempt, MAX_BACKOFF_MS) };
+        }
+        if (!res.ok) throw await vendorError(res, secrets, signal);
+        return { text: renderBody(await readBoundedText(res, MAX_UPSTREAM_BYTES, signal), secrets, req.paging) };
+      });
     } catch (err) {
+      if (err instanceof MarketSharpError) throw err;
+      // A failed fetch, or a body that broke or timed out while being read.
       if (callerSignal()?.aborted) throw new MarketSharpApiError(CANCELLED);
       logFetchFailure('MarketSharp request failed', req.method, err);
       const timedOut = (err as Error).name === 'TimeoutError';
@@ -597,33 +637,24 @@ export async function marketsharpRequest(creds: MarketSharpCredentials | null, r
         timedOut ? "Couldn't reach MarketSharp: it didn't respond in time." : "Couldn't reach MarketSharp: the connection failed."
       );
     }
-    if (isRedirect(res)) await refuseRedirect(res);
 
-    if (res.status === 401 && !refreshed) {
-      await res.body?.cancel().catch(() => undefined);
+    if (outcome === 'refresh') {
       refreshed = true;
       await getToken(creds, true);
       continue;
     }
-    // 429 means MarketSharp rejected the request, so any method may retry.
-    // A 503 can come from a proxy after the backend already handled a POST,
-    // and POST is not assumed idempotent, so only GETs retry on 503.
-    const retryable = res.status === 429 || (res.status === 503 && req.method === 'GET');
-    if (retryable && attempt < MAX_RETRIES) {
-      await res.body?.cancel().catch(() => undefined);
-      const wait = parseRetryAfter(res.headers.get('retry-after')) ?? 1000 * 2 ** attempt;
-      await sleep(Math.min(wait, MAX_BACKOFF_MS), undefined, { signal: callerSignal() }).catch(() => {
+    if ('wait' in outcome) {
+      await sleep(outcome.wait, undefined, { signal: callerSignal() }).catch(() => {
         throw new MarketSharpApiError(CANCELLED);
       });
       continue;
     }
-    if (!res.ok) throw await vendorError(res, secrets);
-    return renderBody(await readBoundedText(res, MAX_UPSTREAM_BYTES), secrets, req.paging);
+    return outcome.text;
   }
 }
 
-async function vendorError(res: Response, secrets: Secrets): Promise<Error> {
-  const text = await readBoundedText(res, MAX_SMALL_BODY_BYTES).catch(() => '');
+async function vendorError(res: Response, secrets: Secrets, signal: AbortSignal): Promise<Error> {
+  const text = await readBoundedText(res, MAX_SMALL_BODY_BYTES, signal).catch(() => '');
   const suffix = detailSuffix(vendorMessage(text), secrets);
   const requestId = vendorRequestId(res);
   const rid = requestId ? ` (MarketSharp request id: ${requestId})` : '';

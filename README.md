@@ -158,8 +158,9 @@ See `.env.example`. The image's health check probes `/health` only when
 - The S2S signature covers only the timestamp, the same as the gateway's
   verifier. Recipient binding comes from the per-vendor subkey.
 - `MCP_ALLOW_INSECURE_DEV` must never be set in a deployment.
-- A request runs at most 4 MarketSharp calls at a time, so a large JSON-RPC
-  batch queues instead of fanning out.
+- A request has at most 4 MarketSharp calls in flight, each counted from the
+  start of the fetch until its response body is fully read. A large JSON-RPC
+  batch queues instead of fanning out. A retry's wait doesn't hold a slot.
 
 ## Development
 

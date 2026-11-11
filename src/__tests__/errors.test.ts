@@ -126,12 +126,12 @@ describe('error copy', () => {
 describe('unexpected errors', () => {
   it('a non-MarketSharp error returns only a generic message and logs its name, never its message', async () => {
     const leaky = 'Bearer sk-live-0123456789abcdef and internal host 10.1.2.3';
-    vendorReplies(() => {
-      // A body whose reader throws a TypeError: not a MarketSharp error.
-      return { status: 200, ok: true, type: 'basic', headers: new Headers(), body: { getReader: () => { throw new TypeError(leaky); } } } as unknown as Response;
-    });
+    vendorReplies(() => json({}));
+    // An argument getter that throws: an error from our own code, not from MarketSharp.
+    const args = {};
+    Object.defineProperty(args, 'contactId', { enumerable: true, get: () => { throw new TypeError(leaky); } });
     const logged = vi.spyOn(logger, 'error').mockImplementation(() => undefined);
-    const result = await runWithCredentials(creds, () => dispatchToolCall(READ, {}, {} as NodeJS.ProcessEnv));
+    const result = await runWithCredentials(creds, () => dispatchToolCall('marketsharp_contacts_get', args, {} as NodeJS.ProcessEnv));
     expect(result.isError).toBe(true);
     expect(result.content).toEqual([{ type: 'text', text: 'Error: Unexpected internal error' }]);
     expect(JSON.stringify(logged.mock.calls)).toContain('TypeError');

@@ -108,11 +108,19 @@ their notes are also on [GitHub Releases](https://github.com/WYRE-AI/marketsharp
   with a port (`[::1]:8080`) matches `[::1]`. A malformed Host is a 403. Ports
   in `MCP_ALLOWED_HOSTS` entries are ignored.
 - One request has at most 4 MarketSharp calls in flight, so a JSON-RPC batch
-  of tool calls can't fan out into one upstream call per message. Waiting
-  calls stop when the gateway client disconnects.
+  of tool calls can't fan out into one upstream call per message. A call holds
+  its slot from the start of the fetch until its response body is fully read
+  (or fails or is cancelled), so at most 4 connections and bodies are open per
+  request. A 429/503 retry wait and the token refresh don't hold a slot.
+  Calls waiting for a slot, and bodies being read, stop when the gateway
+  client disconnects.
 
 ### Fixed
 
+- A failure while reading a MarketSharp response body (a connection reset
+  mid-stream, or the 30 s request timeout) is reported like a failed fetch
+  ("Couldn't reach MarketSharp: ...") instead of as an unexpected internal
+  error.
 - An oversized list response is cut at a record boundary instead of mid-text:
   paging fields (`pageNumber`, `totalPageCount`, `meta`) are kept, also when
   the page sits one level down under `response` or `data`, and a note gives

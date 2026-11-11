@@ -7,6 +7,7 @@ import {
   getToken,
   isReadOnlyRequest,
   marketsharpRequest,
+  MarketSharpApiError,
   MarketSharpAuthError,
   MarketSharpForbiddenError,
   renderBody,
@@ -481,5 +482,126 @@ describe('upstream concurrency per request', () => {
     expect(settled).not.toBe('hung');
     for (const e of settled as Error[]) expect(e.message).toContain('cancelled');
     expect(fetchMock.mock.calls.filter(([u]) => !String(u).endsWith('/token'))).toHaveLength(4);
+  });
+});
+
+describe('upstream slots cover the response body', () => {
+  const fetchMock = vi.fn();
+  const vendorCalls = () => fetchMock.mock.calls.filter(([u]) => !String(u).endsWith('/token'));
+  beforeEach(() => {
+    clearTokenCache();
+    fetchMock.mockReset();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  const read = (i: number) => marketsharpRequest(creds, { method: 'GET', path: `/companies/123/contacts/${i}` });
+  const isToken = (url: unknown) => String(url).endsWith('/token');
+
+  /** Headers arrive at once; the body then stays open until `end` resolves (forever if it never does), like a slow upstream. */
+  function slowBody(open: { now: number; peak: number; cancelled: number }, end: () => Promise<void>): Response {
+    open.now++;
+    open.peak = Math.max(open.peak, open.now);
+    let finished = false;
+    const finish = () => {
+      if (!finished) open.now--;
+      finished = true;
+    };
+    const stream = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        await end();
+        controller.enqueue(new TextEncoder().encode('{"ok":true}'));
+        controller.close();
+        finish();
+      },
+      cancel() {
+        open.cancelled++;
+        finish();
+      },
+    });
+    return new Response(stream, { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  it('a batch of 20 calls never has more than 4 response bodies open', async () => {
+    const open = { now: 0, peak: 0, cancelled: 0 };
+    fetchMock.mockImplementation(async (url: string) =>
+      isToken(url) ? json({ access_token: 'tk' }) : slowBody(open, () => new Promise((r) => setTimeout(r, 10))),
+    );
+    const results = await runInRequestScope({ creds }, () => Promise.all(Array.from({ length: 20 }, (_, i) => read(i))));
+    expect(results).toHaveLength(20);
+    expect(open.peak).toBe(MAX_CONCURRENT_UPSTREAM);
+    expect(open.now).toBe(0);
+  });
+
+  it('aborting the request cancels the bodies being read and frees their slots', async () => {
+    const open = { now: 0, peak: 0, cancelled: 0 };
+    // Bodies that never finish and look at no signal: our own read must give up.
+    fetchMock.mockImplementation(async (url: string) =>
+      isToken(url) ? json({ access_token: 'tk' }) : slowBody(open, () => new Promise<void>(() => {})),
+    );
+    const abort = new AbortController();
+    const calls = runInRequestScope({ creds, signal: abort.signal }, () =>
+      Array.from({ length: 8 }, (_, i) => read(i).catch((e: Error) => e)),
+    );
+    await vi.waitFor(() => expect(open.now).toBe(4));
+    expect(vendorCalls()).toHaveLength(4);
+    abort.abort();
+    const errors = await Promise.all(calls);
+    for (const e of errors) expect((e as Error).message).toContain('cancelled');
+    expect(open.cancelled).toBe(4);
+    expect(open.now).toBe(0);
+    expect(vendorCalls()).toHaveLength(4); // the waiting four never started
+  });
+
+  it('a retry waiting out Retry-After does not hold a slot', async () => {
+    const retried = new Set<string>();
+    const contactId = (url: unknown) => String(url).match(/contacts\/(\d+)/)![1];
+    fetchMock.mockImplementation(async (url: string) => {
+      if (isToken(url)) return json({ access_token: 'tk' });
+      const id = contactId(url);
+      if (Number(id) < 4 && !retried.has(id)) {
+        retried.add(id);
+        return json({}, 429, { 'Retry-After': '0.5' });
+      }
+      return json({ id });
+    });
+    const calls = runInRequestScope({ creds }, () => Array.from({ length: 5 }, (_, i) => read(i)));
+    await vi.waitFor(() => expect(vendorCalls()).toHaveLength(5));
+    // Contacts 0-3 are all sleeping; contact 4 got through without waiting for any of them.
+    expect(vendorCalls().map(([u]) => contactId(u)).sort()).toEqual(['0', '1', '2', '3', '4']);
+    expect(await Promise.all(calls)).toHaveLength(5);
+    expect(vendorCalls()).toHaveLength(9);
+  });
+
+  it('a body that breaks mid-read is the usual "connection failed" error, with no credentials', async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (isToken(url)) return json({ access_token: 'tk' });
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"partial":'));
+          controller.error(new TypeError('terminated key-abc sec-xyz'));
+        },
+      });
+      return new Response(stream, { status: 200 });
+    });
+    const err = await read(1).catch((e) => e);
+    expect(err).toBeInstanceOf(MarketSharpApiError);
+    expect(err.message).toBe("Couldn't reach MarketSharp: the connection failed.");
+  });
+
+  it('a body read that times out is the usual "didn\'t respond in time" error', async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (isToken(url)) return json({ access_token: 'tk' });
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.error(Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' }));
+        },
+      });
+      return new Response(stream, { status: 200 });
+    });
+    await expect(read(1)).rejects.toThrow("Couldn't reach MarketSharp: it didn't respond in time.");
   });
 });
