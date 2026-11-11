@@ -1,0 +1,24 @@
+services:
+  # Gateway mode. MarketSharp credentials arrive per request on x-marketsharp-* headers.
+  # Do not set MARKETSHARP_* credentials or env_file here. That would put a static vendor
+  # credential in the container. The project .env is used only for Compose
+  # interpolation. For AUTH_MODE=env, pass MARKETSHARP_* credentials on that process
+  # instead (see the README).
+  marketsharp-mcp:
+    build: .
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      - MCP_TRANSPORT=http
+      - MCP_HTTP_PORT=8080
+      - MCP_HTTP_HOST=0.0.0.0
+      - AUTH_MODE=gateway
+      - CONDUIT_S2S_SECRET=${CONDUIT_S2S_SECRET:?set CONDUIT_S2S_SECRET}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    healthcheck:
+      # Only the HTTP transport serves /health; under stdio there is nothing to probe.
+      test: ["CMD-SHELL", "[ \"$${MCP_TRANSPORT:-http}\" != \"http\" ] || wget --no-verbose --tries=1 --spider \"http://localhost:$${MCP_HTTP_PORT:-8080}/health\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s

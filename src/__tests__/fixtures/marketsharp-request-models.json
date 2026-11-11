@@ -1,0 +1,506 @@
+{
+  "_source": "Swagger 2.0 document for restapi.marketsharpm.com (info.title 'MarketSharp CRM API 2.0'): the GET routes and POST endpoints the read tools call. GET routes keep the path template, operationId and declared query parameters; POST endpoints also keep the request-body model trimmed to name, type, format, enum and required.",
+  "endpoints": {
+    "GET /companies": {
+      "operationId": "Company_GetCompanies",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}": {
+      "operationId": "Company_Get",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyid}/activities/types": {
+      "operationId": "ActivityTypes_GetActivityTypes",
+      "query": {
+        "includeInactive": {
+          "type": "boolean"
+        },
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/appointments/{appointmentId}": {
+      "operationId": "Appointments_GetAppointmentById",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/appointments/contacts/{contactId}": {
+      "operationId": "Appointments_GetAppointmentsByContactId",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/appointments/resultreasons/active": {
+      "operationId": "Appointments_GetAppointmentResultReasons",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/appointments/results/active": {
+      "operationId": "Appointments_GetAppoinmentResults",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/contacts/{contactId}": {
+      "operationId": "Contact_GetContactById",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/contacts/{contactId}/inquiries": {
+      "operationId": "Inquiries_GetInquiriesByContactId",
+      "query": {
+        "isAppointmentRequired": {
+          "type": "boolean"
+        },
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyid}/divisions": {
+      "operationId": "Division_Get",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/employees": {
+      "operationId": "Employees_GetEmployeeList",
+      "query": {
+        "s": {
+          "type": "string"
+        },
+        "isActiveOnly": {
+          "type": "boolean"
+        },
+        "page": {
+          "type": "integer"
+        },
+        "pageSize": {
+          "type": "integer"
+        },
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/inquiries/{inquiryId}": {
+      "operationId": "Inquiries_GetInquiryById",
+      "query": {
+        "isAppointmentRequired": {
+          "type": "boolean"
+        },
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/inquiries/statuses": {
+      "operationId": "Inquiries_GetAllInquiryStatus",
+      "query": {
+        "includeInactive": {
+          "type": "boolean"
+        },
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/jobs/{jobId}": {
+      "operationId": "Jobs_GetJobByJobId",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/notes/contact/{contactId}": {
+      "operationId": "Notes_GetAllNotes",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/notes/notetype/{noteTypeString}/contact/{contactId}": {
+      "operationId": "Notes_GetNotesByType",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/opportunities/{inquiryId}/notes/{noteType}": {
+      "operationId": "Inquiries_GetOpportunityNotes",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/primaryleadsources": {
+      "operationId": "PrimaryLeadSources_GetPrimaryLeadSources",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/primaryleadsources/{primaryLeadSourceId}/secondaryleadsources": {
+      "operationId": "PrimaryLeadSources_GetSecondaryLeadSources",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/primaryleadsources/{primaryLeadSourceId}/secondaryleadsources/active": {
+      "operationId": "PrimaryLeadSources_GetActiveSecondaryLeadSources",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/primaryleadsources/active": {
+      "operationId": "PrimaryLeadSources_GetActivePrimaryLeadSources",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/products/interests/{activeOnly}": {
+      "operationId": "Products_GetAllProductInterests",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "GET /companies/{companyId}/products/interests/leads/{leadId}": {
+      "operationId": "Products_GetProductInterestsByLeadId",
+      "query": {
+        "api-version": {
+          "type": "string"
+        }
+      }
+    },
+    "POST /companies/{companyId}/search/global": {
+      "operationId": "Search_GlobalSearch",
+      "model": "GlobalSearchBindingModel",
+      "required": [],
+      "properties": {
+        "entry": {
+          "type": "string"
+        },
+        "searchObjectType": {
+          "type": "string"
+        },
+        "numberOfRecords": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "multiCompany": {
+          "type": "boolean"
+        }
+      },
+      "query": {}
+    },
+    "POST /companies/{companyId}/contacts/search": {
+      "operationId": "Contact_SearchContacts",
+      "model": "ContactSearchBindingModel",
+      "required": [],
+      "properties": {
+        "numberOfRecords": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "business_name": {
+          "type": "string"
+        },
+        "first_name": {
+          "type": "string"
+        },
+        "last_name": {
+          "type": "string"
+        },
+        "address_line_one": {
+          "type": "string"
+        },
+        "city": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "zip": {
+          "type": "string"
+        },
+        "email_address": {
+          "type": "string"
+        },
+        "phone_number": {
+          "type": "string"
+        },
+        "contactType": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "companyId": {
+          "type": "string"
+        }
+      },
+      "query": {}
+    },
+    "POST /companies/{companyId}/contacts/filter": {
+      "operationId": "Contact_FilterContacts",
+      "model": "ContactBindingModel",
+      "required": [],
+      "properties": {
+        "start_modified_datetime": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "start_appointment_datetime": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "end_appointment_datetime": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "appointment_salesperson_id": {
+          "type": "string"
+        },
+        "pageNumber": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "rowsPerPage": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "query": {}
+    },
+    "POST /companies/{companyId}/inquiries/filter": {
+      "operationId": "Inquiries_FilterInquiries",
+      "model": "InquiriesBindingModel",
+      "required": [],
+      "properties": {
+        "start_modified_datetime": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "end_modified_datetime": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "start_appointment_datetime": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "end_appointment_datetime": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "appointment_salesperson_id": {
+          "type": "string"
+        },
+        "pageNumber": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "rowsPerPage": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "query": {
+        "isAppointmentRequired": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "POST /companies/{companyid}/inquiries/search": {
+      "operationId": "Inquiries_SearchInquiries",
+      "model": "InquirySearchBindingModel",
+      "required": [],
+      "properties": {
+        "business_name": {
+          "type": "string"
+        },
+        "first_name": {
+          "type": "string"
+        },
+        "last_name": {
+          "type": "string"
+        },
+        "address_line_one": {
+          "type": "string"
+        },
+        "city": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "zip": {
+          "type": "string"
+        },
+        "email_address": {
+          "type": "string"
+        },
+        "phone_number": {
+          "type": "string"
+        },
+        "contactType": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "companyId": {
+          "type": "string"
+        },
+        "numberOfRecords": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "query": {}
+    },
+    "POST /companies/{companyId}/appointments/filter": {
+      "operationId": "Appointments_FilterAppointments",
+      "model": "AppointmentsBindingModel",
+      "required": [],
+      "properties": {
+        "start_modified_datetime": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "end_modified_datetime": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "start_appointment_datetime": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "end_appointment_datetime": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "appointment_salesperson_id": {
+          "type": "string"
+        },
+        "inquiry_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "pageNumber": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "rowsPerPage": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "query": {}
+    },
+    "POST /companies/{companyid}/jobs/search": {
+      "operationId": "Jobs_SearchJobs",
+      "model": "JobSearchBindingModel",
+      "required": [],
+      "properties": {
+        "business_name": {
+          "type": "string"
+        },
+        "first_name": {
+          "type": "string"
+        },
+        "last_name": {
+          "type": "string"
+        },
+        "address_line_one": {
+          "type": "string"
+        },
+        "city": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "zip": {
+          "type": "string"
+        },
+        "email_address": {
+          "type": "string"
+        },
+        "phone_number": {
+          "type": "string"
+        },
+        "job_name": {
+          "type": "string"
+        },
+        "job_number": {
+          "type": "string"
+        },
+        "contactType": {
+          "type": "integer",
+          "format": "int32"
+        },
+        "companyId": {
+          "type": "string"
+        },
+        "numberOfRecords": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "query": {}
+    },
+    "POST /companies/{companyId}/jobs/opportunities": {
+      "operationId": "Jobs_GetJobsAndLeads",
+      "model": "SimpleDateSearchBindingModel",
+      "required": [],
+      "properties": {
+        "fromDate": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "numberOfRecords": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "query": {}
+    }
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "name": "@wyre-ai/marketsharp-mcp",
+  "version": "0.0.0",
+  "description": "MCP server for the MarketSharp CRM REST API - contacts, inquiries (leads), appointments, jobs, notes and activities for home-improvement contractors",
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "marketsharp-mcp": "./dist/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/WYRE-AI/marketsharp-mcp"
+  },
+  "homepage": "https://github.com/WYRE-AI/marketsharp-mcp",
+  "scripts": {
+    "build": "tsup",
+    "prebuild": "npm run clean",
+    "dev": "tsup --watch",
+    "start": "node dist/index.js",
+    "start:http": "MCP_TRANSPORT=http node dist/http.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint . && node scripts/lint-destructive-warnings.mjs src",
+    "clean": "rm -rf dist",
+    "lint:destructive": "node scripts/lint-destructive-warnings.mjs src",
+    "typecheck": "tsc --noEmit",
+    "smoke": "node scripts/smoke-stdio.mjs"
+  },
+  "keywords": [
+    "marketsharp",
+    "crm",
+    "home-improvement",
+    "mcp",
+    "msp",
+    "model-context-protocol"
+  ],
+  "author": "WYRE AI",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@semantic-release/changelog": "^7.0.0",
+    "@semantic-release/github": "^12.0.8",
+    "@semantic-release/npm": "^13.0.0",
+    "@types/node": "^22.10.0",
+    "@vitest/coverage-v8": "^2.1.8",
+    "eslint": "^9.39.5",
+    "globals": "^17.14.0",
+    "semantic-release": "^25.0.9",
+    "tsup": "^8.0.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.72.2",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
