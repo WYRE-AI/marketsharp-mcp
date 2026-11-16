@@ -18,7 +18,7 @@ jobs:
     permissions:
       contents: read
       packages: read
-    uses: wyre-technology/.github/.github/workflows/mcp-server-ci.yml@06856d54d8829929e387523e6c1767d54416e978 # main
+    uses: WYRE-AI/.github/.github/workflows/mcp-server-ci.yml@542c9ed380fff70fab36234fc222cf9e7a076de9 # main
     with:
       node-versions: '["22", "24"]'
       lint-destructive-warnings: true
